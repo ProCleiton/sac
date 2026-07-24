@@ -39,7 +39,9 @@ class NotifyTest(unittest.TestCase):
         (d / "sac.toml").write_text(VALID, encoding="utf-8")
         self.cfg = load_config(d / "sac.toml")
         self.store = Store(d / ".sac")
-        self.runner = FakeRunner()
+        self.runner = FakeRunner(outputs={
+            "list-panes": "%1|env SAC_AGENT=leader kimi\n%2|env SAC_AGENT=dev-1 opencode\n",
+        })
         self.tmux = Tmux("sac-test", runner=self.runner)
 
     def test_sweep_pokes_only_stale(self):
@@ -59,12 +61,18 @@ class NotifyTest(unittest.TestCase):
         self.assertEqual([c for c in self.runner.calls if "send-keys" in c], [])
 
     def test_recv_finished(self):
-        r = FakeRunner(outputs={"capture-pane": "resposta completa\nSAC_DONE\n"})
+        r = FakeRunner(outputs={
+            "list-panes": "%2|env SAC_AGENT=dev-1 opencode\n",
+            "capture-pane": "resposta completa\nSAC_DONE\n",
+        })
         t = Tmux("sac-test", runner=r)
         self.assertEqual(cmd_recv(self.cfg, t, "dev-1"), 0)
 
     def test_recv_in_progress(self):
-        r = FakeRunner(outputs={"capture-pane": "trabalhando...\n"})
+        r = FakeRunner(outputs={
+            "list-panes": "%2|env SAC_AGENT=dev-1 opencode\n",
+            "capture-pane": "trabalhando...\n",
+        })
         t = Tmux("sac-test", runner=r)
         self.assertEqual(cmd_recv(self.cfg, t, "dev-1"), 1)
 

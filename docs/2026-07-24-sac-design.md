@@ -123,9 +123,12 @@ Todo agente recebe no prompt inicial:
 
 1. Você faz parte de uma esteira coordenada pelo SAC. Mensagens chegam pela sua
    inbox; quando cutucado, rode `sac next` para puxar a mais antiga.
-2. Para enviar a outro agente: `sac send <nome> "<mensagem>"`.
-3. Ao terminar de processar uma mensagem: (a) escreva sua resposta terminando com
-   uma linha contendo apenas `SAC_DONE`; (b) rode `sac done <id> "<resumo>"`.
+2. Para enviar a outro agente: `sac send <nome> "<mensagem>"`. O remetente é
+   identificado pela variável de ambiente `SAC_AGENT` (definida pelo `env` no
+   comando do pane), não "user" hardcoded.
+3. Ao terminar de processar: (a) envie o resultado ao remetente original (campo
+   `from:` da mensagem) via `sac send <remetente> "<resultado>"`; (b) escreva sua
+   resposta no pane terminando com `SAC_DONE`; (c) rode `sac done <id> "<resumo>"`.
 4. Sem `sac done`, o notify re-cutucará periodicamente — é o comportamento esperado.
 5. O fluxo da esteira (quem entrega para quem, limites de iteração dos loops) está
    descrito no prompt específico de cada agente (`prompts/<agente>.md`).

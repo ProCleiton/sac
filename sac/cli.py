@@ -7,8 +7,8 @@ import sys
 from pathlib import Path
 
 from .commands import (
-    cmd_done, cmd_down, cmd_log, cmd_next, cmd_notify,
-    cmd_recv, cmd_run, cmd_send, cmd_status, cmd_up,
+    cmd_done, cmd_down, cmd_inject, cmd_log, cmd_next, cmd_notify,
+    cmd_recv, cmd_run, cmd_send, cmd_sidebar, cmd_status, cmd_up,
 )
 from .config import ConfigError, load_config
 from .store import Store, StoreError
@@ -44,6 +44,11 @@ def _build_parser() -> argparse.ArgumentParser:
     sp = sub.add_parser("log", help="mostra o log.jsonl")
     sp.add_argument("-f", "--follow", action="store_true")
 
+    sp = sub.add_parser("inject", help="re-injeta o prompt_file de um agente")
+    sp.add_argument("agent")
+
+    sub.add_parser("sidebar", help="renderiza a sidebar com status dos agentes")
+
     sp = sub.add_parser("run", help="dá o pontapé em um loop declarado")
     sp.add_argument("loop")
     sp.add_argument("task")
@@ -61,22 +66,31 @@ def main(argv: list[str] | None = None) -> int:
 
     root = cfg_path.parent
     store = Store(root / ".sac")
-    tmux = Tmux(cfg.session_name)
+    tmux = Tmux(cfg.session_name, socket=cfg.socket)
 
     try:
         match args.command:
             case "up":
                 return cmd_up(cfg, store, tmux, root)
+            case "inject":
+                return cmd_inject(cfg, tmux, root, args.agent)
             case "down":
                 return cmd_down(cfg, tmux)
             case "status":
                 return cmd_status(cfg, store, tmux)
+            case "sidebar":
+                return cmd_sidebar(cfg, store, tmux)
             case "attach":
-                os.execvp("tmux", ["tmux", "attach", "-t", cfg.session_name])
+                cmd = ["tmux"]
+                if cfg.socket:
+                    cmd += ["-S", cfg.socket]
+                cmd += ["attach", "-t", cfg.session_name]
+                os.execvp("tmux", cmd)
             case "next":
                 return cmd_next(store, os.environ)
             case "send":
-                cmd_send(cfg, store, tmux, args.to, args.body)
+                cmd_send(cfg, store, tmux, args.to, args.body,
+                         sender=os.environ.get("SAC_AGENT", "user"))
                 return 0
             case "done":
                 return cmd_done(store, os.environ, args.msg_id, " ".join(args.summary))

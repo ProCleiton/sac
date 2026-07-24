@@ -18,10 +18,12 @@ SENTINEL = "SAC_DONE"
 def cmd_send(cfg: Config, store: Store, tmux: Tmux, to: str, body: str, sender: str = "user") -> str:
     cfg.agent(to)
     mid = store.send(sender, to, body)
-    if tmux.has_session() and tmux.has_window(to):
-        tmux.send_keys(to, POKE_TEXT)
-    else:
-        print(f"aviso: janela '{to}' não encontrada; mensagem persistida na inbox", file=sys.stderr)
+    if tmux.has_session():
+        pid = tmux.find_pane_id(to)
+        if pid:
+            tmux.send_keys(pid, POKE_TEXT)
+        else:
+            print(f"aviso: pane do agente '{to}' não encontrado; mensagem persistida na inbox", file=sys.stderr)
     return mid
 
 
@@ -67,28 +69,121 @@ def extract_reply(pane_text: str) -> tuple[bool, str]:
     return True, pane_text[:idx].rstrip("\n")
 
 
-def cmd_up(cfg: Config, store: Store, tmux: Tmux, project_root: Path) -> int:
-    if tmux.has_session():
-        print(f" sessão '{tmux.session}' já existe — use `sac attach`")
-        return 0
-    leader = cfg.leader
-    tmux.new_session(leader.name, [leader.command, *leader.args], env={"SAC_AGENT": leader.name})
-    _inject_prompt(tmux, leader, project_root)
-    for agent in cfg.agents:
-        if agent.name == leader.name:
-            continue
-        tmux.new_window(agent.name, [agent.command, *agent.args], env={"SAC_AGENT": agent.name})
-        _inject_prompt(tmux, agent, project_root)
-    print(f"sessão '{tmux.session}' no ar com {len(cfg.agents)} agentes")
+SIDEBAR_CMD = ["sh", "-c", "while true; do clear; sac sidebar; sleep 5; done"]
+SIDEBAR_WIDTH = 30
+DASH_LOG_CMD = ["sac", "log", "-f"]
+DASH_NOTIFY_CMD = ["sac", "notify"]
+
+
+def cmd_sidebar(cfg: Config, store: Store, tmux: Tmux) -> int:
+    out_lines = ["SAC", ""]
+    # Mapeia índice da janela para cada agente e dash
+    cmd_raw = tmux._run("list-windows", "-t", tmux.session, "-F",
+                        "#{window_index} #{window_name}").stdout
+    win_map: dict[str, str] = {}  # window_name → index
+    for line in cmd_raw.splitlines():
+        parts = line.strip().split(None, 1)
+        if len(parts) == 2:
+            win_map[parts[1]] = parts[0]
+    # Agentes agrupados por role
+    agents = sorted(cfg.agents, key=lambda a: a.role != "leader")
+    for a in agents:
+        inbox = len(store.pending(a.name))
+        claimed = len(store.claimed(a.name))
+        if claimed > 0:
+            marker = "\u2699"
+        elif inbox > 0:
+            marker = "\U0001f4e8"
+        else:
+            marker = "\u00b7"
+        wid = win_map.get(a.name, "\u2014")
+        out_lines.append(f"{a.name:<8} {marker} in={inbox} cl={claimed} [{wid}]")
+    out_lines.append("")
+    # Loops
+    if cfg.loops:
+        out_lines.append("loops")
+        for l in cfg.loops:
+            seq = "\u2192".join(l.sequence)
+            out_lines.append(f"  {l.name}: {seq}")
+        out_lines.append("")
+    # Atalhos
+    out_lines.append("atalhos")
+    for a in agents:
+        wid = win_map.get(a.name)
+        if wid:
+            out_lines.append(f"C-b {wid} {a.name}")
+    dash_w = win_map.get("dash")
+    if dash_w:
+        out_lines.append(f"C-b {dash_w} dash")
+    out_lines.append("C-b d detach")
+    print("\n".join(out_lines))
     return 0
 
 
-def _inject_prompt(tmux: Tmux, agent, project_root: Path) -> None:
-    if not agent.prompt_file:
+def cmd_up(cfg: Config, store: Store, tmux: Tmux, project_root: Path,
+           boot_wait: float | None = None) -> int:
+    if tmux.has_session():
+        print(f" sessão '{tmux.session}' já existe — use `sac attach`")
+        return 0
+    _boot = boot_wait if boot_wait is not None else cfg.boot_wait
+    agents = sorted(cfg.agents, key=lambda a: a.role != "leader")
+    harness_ids = {}
+    first = True
+    for agent in agents:
+        if first:
+            sidebar_id = tmux.new_session(agent.name, SIDEBAR_CMD)
+            first = False
+        else:
+            sidebar_id = tmux.new_window(agent.name, SIDEBAR_CMD)
+        harness_id = tmux.split_window(sidebar_id, [agent.command, *agent.args],
+                                        env={"SAC_AGENT": agent.name})
+        tmux.resize_pane(sidebar_id, SIDEBAR_WIDTH)
+        tmux.set_pane_title(harness_id, agent.name)
+        harness_ids[agent.name] = harness_id
+    # janela dashboard (sidebar + log + notify)
+    d_side = tmux.new_window("dash", SIDEBAR_CMD)
+    d_log = tmux.split_window(d_side, DASH_LOG_CMD)
+    tmux.split_window(d_log, DASH_NOTIFY_CMD, vertical=True)
+    tmux.resize_pane(d_side, SIDEBAR_WIDTH)
+    # aterrissar no leader
+    leader_name = agents[0].name
+    tmux.select_window(leader_name)
+    tmux.select_pane(harness_ids[leader_name])
+    # boot wait + prompts
+    if _boot > 0:
+        time.sleep(_boot)
+    for agent in agents:
+        pid = harness_ids.get(agent.name)
+        if pid:
+            _inject_prompt(tmux, agent, project_root, pane_id=pid)
+    print(f"sessão '{tmux.session}' no ar com {len(cfg.agents)} agentes + dashboard")
+    return 0
+
+
+def _inject_prompt(tmux: Tmux, agent, project_root: Path, pane_id: str | None = None) -> None:
+    if not agent.prompt_file or not pane_id:
         return
     p = project_root / agent.prompt_file
     if p.is_file():
-        tmux.paste(agent.name, p.read_text(encoding="utf-8"))
+        tmux.paste(pane_id, p.read_text(encoding="utf-8"))
+        tmux.press_enter(pane_id)
+
+
+def cmd_inject(cfg: Config, tmux: Tmux, project_root: Path, agent_name: str) -> int:
+    try:
+        a = cfg.agent(agent_name)
+    except ConfigError as e:
+        print(f"erro: {e}", file=sys.stderr)
+        return 1
+    if not a.prompt_file:
+        print(f"aviso: {agent_name} não tem prompt_file configurado", file=sys.stderr)
+        return 1
+    pid = tmux.find_pane_id(agent_name)
+    if not pid:
+        print(f"aviso: pane do agente '{agent_name}' não encontrado na sessão", file=sys.stderr)
+        return 1
+    _inject_prompt(tmux, a, project_root, pane_id=pid)
+    return 0
 
 
 def cmd_down(cfg: Config, tmux: Tmux) -> int:
@@ -104,7 +199,7 @@ def cmd_status(cfg: Config, store: Store, tmux: Tmux) -> int:
     up = tmux.has_session()
     print(f"sessão '{tmux.session}': {'ativa' if up else 'inativa'}")
     for a in cfg.agents:
-        win = up and tmux.has_window(a.name)
+        win = up and tmux.has_pane(a.name)
         inbox = len(store.pending(a.name))
         claimed = len(store.claimed(a.name))
         print(f"  {a.name:<12} {a.role:<7} janela={'sim' if win else 'não'}  inbox={inbox} claimed={claimed}")
@@ -113,7 +208,11 @@ def cmd_status(cfg: Config, store: Store, tmux: Tmux) -> int:
 
 def cmd_recv(cfg: Config, tmux: Tmux, agent: str, lines: int = 200) -> int:
     cfg.agent(agent)
-    done, text = extract_reply(tmux.capture_pane(agent, lines))
+    pid = tmux.find_pane_id(agent)
+    if not pid:
+        print(f"erro: pane do agente '{agent}' não encontrado na sessão", file=sys.stderr)
+        return 1
+    done, text = extract_reply(tmux.capture_pane(pid, lines))
     if not done:
         print("⏳ ainda processando (sem SAC_DONE)")
         print(text[-500:])
@@ -127,9 +226,11 @@ def notify_sweep(cfg: Config, store: Store, tmux: Tmux) -> dict[str, int]:
     for a in cfg.agents:
         stale = store.stale(a.name, cfg.poke_stale_after)
         if stale:
-            tmux.send_keys(a.name, f"SAC: {len(stale)} mensagem(ns) aguardando — rode `sac next`")
-            store.log("poke", agent=a.name, count=len(stale))
-            pokes[a.name] = len(stale)
+            pid = tmux.find_pane_id(a.name)
+            if pid:
+                tmux.send_keys(pid, f"SAC: {len(stale)} mensagem(ns) aguardando — rode `sac next`")
+                store.log("poke", agent=a.name, count=len(stale))
+                pokes[a.name] = len(stale)
     return pokes
 
 

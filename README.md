@@ -10,24 +10,29 @@ windows and lets them exchange messages through the filesystem — no daemon, no
 database, no screen-scraping heuristics. Completion is explicit: agents end
 their replies with a `SAC_DONE` sentinel line and run `sac done <id>`.
 
+## Install
+
+```bash
+pipx install -e .          # recommended — isolates SAC in its own venv
+# or
+pip install --user -e .    # may need --break-system-packages on Ubuntu 24.04+
+```
+
 ## Quickstart
 
 ```bash
-cd sac
 python3 -m unittest discover -s tests -v   # test suite
-python3 -m sac up                           # start the tmux session with agents
-python3 -m sac status                       # overview
-python3 -m sac send leader "implement X"    # task the leader
-python3 -m sac run dev-review "feature Y"   # kick off a declared loop
-python3 -m sac recv dev-1                   # read a reply (up to SAC_DONE)
-python3 -m sac notify --once                # single re-poke sweep
-python3 -m sac notify                       # continuous watcher (Ctrl-C exits)
-python3 -m sac log -f                       # follow log.jsonl
-python3 -m sac attach                       # attach to the tmux session
-python3 -m sac down                         # stop the session
+sac up                                      # start the tmux session with agents
+sac status                                  # overview
+sac send leader "implement X"               # task the leader
+sac run dev-review "feature Y"              # kick off a declared loop
+sac recv dev-1                              # read a reply (up to SAC_DONE)
+sac notify --once                           # single re-poke sweep
+sac notify                                  # continuous watcher (Ctrl-C exits)
+sac log -f                                  # follow log.jsonl
+sac attach                                  # attach to the tmux session
+sac down                                    # stop the session
 ```
-
-Optional install: `pip install -e .` exposes the `sac` command.
 
 ## Concepts
 
@@ -35,6 +40,9 @@ Optional install: `pip install -e .` exposes the `sac` command.
   session. Crash of SAC takes nothing down; `sac up` is idempotent.
 - **Explicit completion contract**: agents finish replies with `SAC_DONE` and run
   `sac done <id>` — no fragile turn-detection heuristics.
+- **Reply-to-sender**: upon completing a task, auxiliaries send the result back to
+  the original sender via `sac send <sender> "<result>"` before writing `SAC_DONE`
+  and running `sac done <id>`.
 - **Configuration**: `sac.toml` declares exactly one leader, the auxiliaries and
   named loops. Loops are not enforced — the workflow lives in each agent's
   contract prompt (`prompts/`).

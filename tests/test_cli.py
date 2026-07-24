@@ -39,6 +39,24 @@ class CliTest(unittest.TestCase):
         store = Store(self.d / ".sac")
         self.assertEqual(len(store.pending("dev-1")), 1)
 
+    def test_send_with_agent_env_sets_sender(self):
+        with patch.dict(os.environ, {"SAC_AGENT": "leader"}):
+            rc = main(["--config", self.cfg_path, "send", "dev-1", "tarefa"])
+        self.assertEqual(rc, 0)
+        store = Store(self.d / ".sac")
+        pending = store.pending("dev-1")
+        self.assertEqual(len(pending), 1)
+        msg = store.next("dev-1")
+        self.assertEqual(msg.sender, "leader")
+
+    def test_send_without_env_sets_sender_user(self):
+        with patch.dict(os.environ, {}, clear=True):
+            rc = main(["--config", self.cfg_path, "send", "dev-1", "tarefa"])
+        self.assertEqual(rc, 0)
+        store = Store(self.d / ".sac")
+        msg = store.next("dev-1")
+        self.assertEqual(msg.sender, "user")
+
     def test_next_without_agent_env_returns_2(self):
         with patch.dict(os.environ, {}, clear=True):
             rc = main(["--config", self.cfg_path, "next"])
@@ -61,6 +79,19 @@ class CliTest(unittest.TestCase):
     def test_notify_once(self):
         rc = main(["--config", self.cfg_path, "notify", "--once"])
         self.assertEqual(rc, 0)
+
+    def test_inject_unknown_agent_returns_1(self):
+        rc = main(["--config", self.cfg_path, "inject", "fantasma"])
+        self.assertEqual(rc, 1)
+
+    def test_sidebar_via_cli(self):
+        rc = main(["--config", self.cfg_path, "sidebar"])
+        self.assertEqual(rc, 0)
+
+    def test_inject_known_agent_returns_0(self):
+        # sem sessão tmux, o inject não encontra pane → rc 1 (mas o parsing funciona)
+        rc = main(["--config", self.cfg_path, "inject", "dev-1"])
+        self.assertEqual(rc, 1)
 
 
 if __name__ == "__main__":

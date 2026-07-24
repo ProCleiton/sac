@@ -42,6 +42,7 @@ class LoadConfigTest(unittest.TestCase):
         self.assertEqual(cfg.session_name, "sac-test")
         self.assertEqual(cfg.notify_interval, 30)
         self.assertEqual(cfg.poke_stale_after, 120)
+        self.assertEqual(cfg.boot_wait, 12)
         self.assertEqual(len(cfg.agents), 2)
         self.assertEqual(cfg.leader.name, "leader")
         self.assertEqual(cfg.agent("dev-1").command, "opencode")
@@ -52,6 +53,11 @@ class LoadConfigTest(unittest.TestCase):
         cfg = self._load(VALID.replace("notify_interval = 30\n", "").replace("poke_stale_after = 120\n", ""))
         self.assertEqual(cfg.notify_interval, 30)
         self.assertEqual(cfg.poke_stale_after, 120)
+        self.assertEqual(cfg.boot_wait, 12)
+
+    def test_boot_wait_custom(self):
+        cfg = self._load(VALID.replace("name = \"sac-test\"", "name = \"sac-test\"\nboot_wait = 3"))
+        self.assertEqual(cfg.boot_wait, 3)
 
     def test_no_leader_fails(self):
         with self.assertRaises(ConfigError):
@@ -85,3 +91,18 @@ class LoadConfigTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class SocketConfigTest(unittest.TestCase):
+    def test_socket_parsed_and_expanded(self):
+        d = tempfile.mkdtemp()
+        p = Path(d) / "sac.toml"
+        p.write_text(VALID.replace('name = "sac-test"', 'name = "sac-test"\nsocket = "~/.sac/tmux.sock"'), encoding="utf-8")
+        cfg = load_config(p)
+        self.assertEqual(cfg.socket, str(Path("~/.sac/tmux.sock").expanduser()))
+
+    def test_socket_default_none(self):
+        d = tempfile.mkdtemp()
+        p = Path(d) / "sac.toml"
+        p.write_text(VALID, encoding="utf-8")
+        self.assertIsNone(load_config(p).socket)

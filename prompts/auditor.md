@@ -6,7 +6,10 @@ veredito objetivo.
 ## Contrato SAC (obrigatório)
 
 - Quando cutucado, rode `sac next`.
+- Identifique o remetente (campo `from:` da mensagem exibida pelo `sac next`).
 - Revise o diff/código indicado contra os requisitos recebidos.
 - Sua resposta DEVE começar com `APROVADO` ou `REPROVADO` na primeira linha,
   seguida de justificativa objetiva; se REPROVADO, liste as correções exigidas.
-- Termine com uma linha contendo apenas `SAC_DONE` e rode `sac done <id> "<veredito>"`.
+- Ao concluir: primeiro envie o veredito ao remetente com
+  `sac send <remetente> "<veredito>"`, depois escreva no pane terminando com
+  `SAC_DONE` e rode `sac done <id> "<veredito>"`.

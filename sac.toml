@@ -1,26 +1,28 @@
 [session]
 name = "sac"
-notify_interval = 30
-poke_stale_after = 120
+notify_interval = 10
+poke_stale_after = 10
+boot_wait = 12
+socket = "~/.sac/tmux.sock"   # socket dedicado (acessível via SSH/Tailscale); comente para usar o default do tmux
 
 [[agents]]
 name = "leader"
 command = "kimi"
-args = ["--model", "esteira/k3"]
+args = ["--model", "esteira/k3", "--yolo"]
 role = "leader"
 prompt_file = "prompts/leader.md"
 
 [[agents]]
 name = "dev-1"
 command = "opencode"
-args = ["-m", "opencode-go/deepseek-v4-flash"]
+args = ["-m", "opencode-go/deepseek-v4-flash", "--auto"]
 role = "aux"
 prompt_file = "prompts/dev.md"
 
 [[agents]]
 name = "auditor"
 command = "kimi"
-args = ["--model", "esteira/k3"]
+args = ["--model", "esteira/k3", "--yolo"]
 role = "aux"
 prompt_file = "prompts/auditor.md"
 
