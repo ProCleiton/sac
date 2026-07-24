@@ -28,7 +28,17 @@ O sistema SHALL expor o comando `sac kill <agente>` para reiniciar o harness de 
 ## MODIFIED Requirements
 
 ### Requirement: Resiliência em loops — try/except em cmd_notify
-O comando `sac notify` SHALL capturar exceções no loop de sweep para evitar morte silenciosa.
+O sistema SHALL oferecer compatibilidade com o modelo notify original para operação sem daemon, com captura de exceções no loop de sweep para evitar morte silenciosa.
+
+#### Scenario: notify — watcher contínuo (legado)
+- **WHEN** `sac notify` é executado sem `--once`
+- **THEN** o sistema entra em loop: a cada `notify_interval` segundos varre inbox/claimed
+- **AND** mensagens mais velhas que `poke_stale_after` segundos provocam re-cutucada do agente com texto genérico
+- **AND** o loop termina com Ctrl-C
+
+#### Scenario: notify --once — varredura única
+- **WHEN** `sac notify --once` é executado
+- **THEN** o sistema executa uma única varredura de stale detection e sai
 
 #### Scenario: Notify com try/except (já coberto em core-mensageria)
 - **WHEN** `sac notify` roda e `notify_sweep` lança exceção
@@ -36,7 +46,12 @@ O comando `sac notify` SHALL capturar exceções no loop de sweep para evitar mo
 - **AND** o loop continua
 
 ### Requirement: Resiliência em cmd_log -f
-O comando `sac log -f` SHALL capturar exceções de leitura para evitar morte do pane.
+O sistema SHALL expor o log de eventos para acompanhamento em tempo real, com captura de exceções de leitura para evitar morte do pane.
+
+#### Scenario: log — exibir log
+- **WHEN** `sac log` é executado
+- **THEN** o conteúdo de `.sac/log.jsonl` é exibido
+- **AND** `sac log -f` segue o arquivo em tempo real (tail -f)
 
 #### Scenario: Log -f com erro de leitura
 - **WHEN** `sac log -f` encontra erro de I/O no arquivo de log

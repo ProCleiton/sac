@@ -36,6 +36,18 @@ O sistema SHALL conseguir localizar o pane da sidebar dentro de uma janela de ag
 ### Requirement: Layout por janela com sidebar (kill recriação)
 O layout de janela SHALL suportar recriação do pane do harness após `sac kill` sem perder a estrutura sidebar + harness.
 
+#### Scenario: Criação de janela de agente
+- **WHEN** `sac up` é executado
+- **THEN** o primeiro agente (leader) é criado via `tmux new-session` com o comando sidebar
+- **AND** os demais agentes são criados via `tmux new-window`
+- **AND** cada janela contém: sidebar (30 cols, esquerda) + harness (divisão horizontal à direita)
+- **AND** o harness recebe title com o nome do agente
+- **AND** a sidebar executa `sh -c "while true; do clear; sac sidebar; sleep 5; done"` em loop infinito
+
+#### Scenario: Redimensionamento da sidebar
+- **WHEN** a janela é criada com split horizontal
+- **THEN** o pane da sidebar é redimensionado para 30 colunas via `tmux resize-pane -x 30`
+
 #### Scenario: Recriação de harness após kill
 - **GIVEN** janela do agente com 2 panes: sidebar (esquerda) e harness (direita)
 - **WHEN** o harness é morto via `sac kill`
