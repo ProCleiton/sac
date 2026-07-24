@@ -15,14 +15,19 @@ class FakeRunner:
     def __call__(self, *args):
         self.calls.append(args)
         key = args[1] if len(args) > 1 else ""
-        sub_key = f"{key}|{args[2]}" if len(args) > 2 and key == "list-panes" else None
+        sub_key = None
+        if key == "list-panes" and len(args) > 2:
+            sub_key = f"list-panes|{args[2]}"
+        elif key == "-S" and len(args) > 3:
+            sub_key = f"-S|{args[3]}"
         out = self.outputs.get(key, "")
         if sub_key and not out:
             out = self.outputs.get(sub_key, "")
         if not out and "#{pane_id}" in str(args):
             self._seq += 1
             out = f"%{self._seq}"
-        rc = self.outputs.get(("rc", key), self.rc)
+        rc_key = ("rc", sub_key) if sub_key and ("rc", sub_key) in self.outputs else ("rc", key)
+        rc = self.outputs.get(rc_key, self.rc)
         return subprocess.CompletedProcess(args, rc, stdout=out, stderr="")
 
 

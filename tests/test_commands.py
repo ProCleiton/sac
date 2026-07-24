@@ -199,11 +199,26 @@ class UpDownStatusTest(unittest.TestCase):
         cmd_up(self.cfg, self.store, t, self.root, boot_wait=0)
         hook_call = [c for c in r.calls if c[1] == "set-hook"][0]
         hook_str = " ".join(hook_call)
+        self.assertIn("sac sidebar", hook_str, "hook deve localizar sidebar por start_command")
+        self.assertIn("##{pane_id}", hook_str, "hook deve escapar ##{pane_id} para tmux")
+        self.assertIn("list-panes", hook_str, "hook deve usar list-panes")
         self.assertIn("resize-pane", hook_str, "hook deve conter resize-pane")
         self.assertIn("-x 30", hook_str, "hook deve ter largura 30")
-        self.assertIn("$w.0", hook_str, "hook deve mirar pane index 0 (sidebar)")
         self.assertIn("leader", hook_str, "hook deve referenciar janela leader")
         self.assertIn("dev-1", hook_str, "hook deve referenciar janela dev-1")
+        self.assertIn("true", hook_str, "hook deve terminar com true (exit 0 garantido)")
+
+    def test_hook_with_socket(self):
+        r = FakeRunner(outputs={
+            ("rc", "-S|has-session"): 1,
+            "-S|list-windows": "leader\ndev-1\ndash\n",
+        })
+        t = Tmux("sac-test", runner=r, socket="/tmp/.sac-tmux.sock")
+        cmd_up(self.cfg, self.store, t, self.root, boot_wait=0)
+        hook_call = [c for c in r.calls if "set-hook" in c][0]
+        hook_str = " ".join(hook_call)
+        self.assertIn("-S /tmp/.sac-tmux.sock", hook_str,
+                      "hook deve usar socket configurado")
 
 
 class InjectTest(unittest.TestCase):

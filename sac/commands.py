@@ -209,8 +209,13 @@ def cmd_up(cfg: Config, store: Store, tmux: Tmux, project_root: Path,
         if pid:
             _inject_prompt(tmux, agent, project_root, pane_id=pid)
     agent_names = " ".join(a.name for a in cfg.agents)
-    hook_cmd = (f"run-shell 'for w in {agent_names}; do "
-                f"tmux resize-pane -t {tmux.session}:$w.0 -x {SIDEBAR_WIDTH} 2>/dev/null; done'")
+    tmux_bin = f"tmux -S {cfg.socket}" if cfg.socket else "tmux"
+    hook_cmd = (
+        f"run-shell 'for w in {agent_names}; do "
+        f"id=$({tmux_bin} list-panes -t {tmux.session}:$w "
+        f"-F \"##{{pane_id}} ##{{pane_start_command}}\" | grep \"sac sidebar\" | cut -d\" \" -f1); "
+        f"[ -n \"$id\" ] && {tmux_bin} resize-pane -t \"$id\" -x {SIDEBAR_WIDTH}; "
+        f"done; true'")
     tmux._run("set-hook", "-t", tmux.session, "client-resized", hook_cmd)
     print(f"sessão '{tmux.session}' no ar com {len(cfg.agents)} agentes + dashboard")
     if sys.stdin.isatty():
