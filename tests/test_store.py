@@ -72,6 +72,39 @@ class StoreTest(unittest.TestCase):
         self.assertEqual(first["ts"], "2026-07-24T10:00:00")
         self.assertEqual(first["to"], "dev-1")
 
+    def test_clean_orphans_removes_inbox(self):
+        self.store.send("user", "auditor", "msg1", now=T0)
+        self.store.send("user", "leader", "msg2", now=T0)
+        self.store.send("user", "dev-1", "msg3", now=T0)
+        self.store.next("auditor")
+        done_dir = self.root / "done" / "leader"
+        done_dir.mkdir(parents=True, exist_ok=True)
+        (done_dir / "some-msg.msg").write_text("done msg", encoding="utf-8")
+        stats = self.store.clean_orphans(["leader", "dev-1"])
+        self.assertIn("inbox_files", stats)
+        self.assertIn("claimed_files", stats)
+        self.assertFalse((self.root / "inbox" / "auditor").exists(),
+                          "inbox de agente removido deve ser limpa")
+        self.assertFalse((self.root / "claimed" / "auditor").exists(),
+                          "claimed de agente removido deve ser limpa")
+        self.assertTrue(done_dir.exists(),
+                         "done/ não deve ser tocado")
+        self.assertEqual(len(list((self.root / "inbox" / "leader").glob("*.msg"))), 1,
+                         "inbox de agente válido preservado")
+
+    def test_clean_orphans_logs_event(self):
+        self.store.send("user", "auditor", "msg1", now=T0)
+        self.store.clean_orphans(["leader"])
+        log = (self.root / "log.jsonl").read_text(encoding="utf-8")
+        self.assertIn("clean", log)
+        self.assertIn("auditor", log)
+
+    def test_clean_orphans_no_orphans(self):
+        self.store.send("user", "leader", "msg1", now=T0)
+        stats = self.store.clean_orphans(["leader"])
+        self.assertEqual(stats["inbox_files"], 0)
+        self.assertEqual(stats["claimed_files"], 0)
+
 
 if __name__ == "__main__":
     unittest.main()

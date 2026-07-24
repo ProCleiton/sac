@@ -26,6 +26,8 @@ sac send leader "implement X"               # task the leader
 sac run dev-review "feature Y"              # kick off a declared loop
 sac recv dev-1                              # read a reply (up to SAC_DONE)
 sac daemon                                  # run the delivery daemon (auto-started on dash)
+sac kill <agent>                            # restart a stuck harness (re-injects prompt, re-alerts claimed tasks)
+sac status --clean                          # overview + remove orphan inbox/claimed from removed agents
 sac notify --once                           # single re-poke sweep (legacy)
 sac log -f                                  # follow log.jsonl
 sac attach                                  # attach to the tmux session
@@ -51,6 +53,12 @@ sac down                                    # stop the session
 - **Configuration**: `sac.toml` declares exactly one leader, the auxiliaries and
   named loops. Loops are not enforced — the workflow lives in each agent's
   contract prompt (`prompts/`).
+- **Harness recovery**: `sac kill <agent>` restarts a stuck harness in-place —
+  kills the process, recreates the pane from the sidebar, re-injects the prompt
+  file, and re-alerts any pending claimed tasks.
+- **Orphan cleanup**: `sac status --clean` removes inbox and claimed directories
+  for agents no longer declared in `sac.toml` (preserves `done/` history). The
+  event is logged to `log.jsonl`.
 - **Reply-to-sender**: upon completing a task, auxiliaries send the result back to
   the original sender via `sac send <sender> "<result>"` before writing `SAC_DONE`
   and running `sac done <id>`.

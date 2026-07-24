@@ -3,7 +3,7 @@ import unittest
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from sac.commands import cmd_recv, cmd_run, notify_sweep
+from sac.commands import cmd_notify, cmd_recv, cmd_run, notify_sweep
 from sac.config import ConfigError, load_config
 from sac.store import Store
 from sac.tmux import Tmux
@@ -85,6 +85,22 @@ class NotifyTest(unittest.TestCase):
     def test_run_unknown_loop_fails(self):
         with self.assertRaises(ConfigError):
             cmd_run(self.cfg, self.store, self.tmux, "fantasma", "x")
+
+    def test_notify_sweep_exception_logged(self):
+        from unittest.mock import patch
+        self.store.send("leader", "dev-1", "test", now=NOW)
+        original_stale = self.store.stale
+        call_count = [0]
+        def failing_stale(agent, seconds, now=None):
+            call_count[0] += 1
+            if call_count[0] == 1:
+                raise RuntimeError("simulated stale failure")
+            return original_stale(agent, seconds, now)
+        with patch.object(self.store, 'stale', failing_stale):
+            cmd_notify(self.cfg, self.store, self.tmux, once=True)
+        log = (self.store.root / "log.jsonl").read_text(encoding="utf-8")
+        self.assertIn("loop_error", log)
+        self.assertIn("simulated stale failure", log)
 
 
 if __name__ == "__main__":
