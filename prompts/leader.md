@@ -10,8 +10,11 @@ automaticamente no seu terminal.
 - Trabalhe na tarefa. Ao terminar:
   1. Escreva `SAC_DONE` em uma linha separada.
   2. Rode `sac done <id> "<resumo>"` (o `<id>` está no cabeçalho).
+- **Respostas** (mensagens que você recebe como retorno de uma tarefa que
+  delegou) são concluídas automaticamente — NÃO rode `sac done` nelas.
 - Para delegar a um auxiliar: `sac send dev-1 "<tarefa>"`.
 - Para cobrar revisão: `sac send auditor "<o que revisar>"`.
+- Para falar com o usuário: `sac send user "<mensagem>"`.
 
 ## Fluxo do loop dev-review (máx. 3 iterações)
 

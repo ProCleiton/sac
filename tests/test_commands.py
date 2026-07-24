@@ -1,4 +1,6 @@
+import os
 import tempfile
+import time
 import unittest
 from datetime import datetime
 from pathlib import Path
@@ -54,6 +56,25 @@ class CommandsTest(unittest.TestCase):
         with self.assertRaises(ConfigError):
             cmd_send(self.cfg, self.store, self.tmux, "fantasma", "oi")
 
+    def test_cmd_send_user_accepts(self):
+        from sac.config import ConfigError
+        try:
+            cmd_send(self.cfg, self.store, self.tmux, "user", "mensagem", sender="dev-1")
+        except ConfigError:
+            self.fail("send para user não deve levantar ConfigError")
+        pending = self.store.pending("user")
+        self.assertEqual(len(pending), 1, "mensagem deve ir para inbox/user/")
+        self.assertIn("from-dev-1", pending[0])
+
+    def test_cmd_send_user_no_poke(self):
+        r = FakeRunner(rc=0, outputs={
+            "list-panes": "%2|env SAC_AGENT=dev-1 opencode\n",
+        })
+        t = Tmux("sac-test", runner=r)
+        cmd_send(self.cfg, self.store, t, "user", "msg", sender="dev-1")
+        send_keys_calls = [c for c in r.calls if c[1] == "send-keys"]
+        self.assertEqual(len(send_keys_calls), 0, "send para user não deve cutucar nenhum pane")
+
     def test_next_prints_and_claims(self):
         cmd_send(self.cfg, self.store, self.tmux, "dev-1", "faça X", sender="leader")
         rc = cmd_next(self.store, {"SAC_AGENT": "dev-1"})
@@ -63,6 +84,52 @@ class CommandsTest(unittest.TestCase):
 
     def test_next_without_agent_env_fails(self):
         self.assertEqual(cmd_next(self.store, {}), 2)
+
+    def test_cmd_next_acks_when_daemon_active(self):
+        from sac.commands import _daemon_active
+        (self.store.root).mkdir(parents=True, exist_ok=True)
+        with self.store.root.joinpath("daemon.pid").open("w") as f:
+            f.write(str(os.getpid()))
+        self.assertTrue(_daemon_active(self.store))
+        cmd_send(self.cfg, self.store, self.tmux, "dev-1", "faça Y", sender="leader")
+        rc = cmd_next(self.store, {"SAC_AGENT": "dev-1"})
+        self.assertEqual(rc, 0)
+        self.assertEqual(self.store.pending("dev-1"), [])
+        self.assertEqual(self.store.claimed("dev-1"), [], "com daemon: não deve ir para claimed")
+        log = (self.store.root / "log.jsonl").read_text(encoding="utf-8")
+        self.assertIn("ack", log)
+
+    def test_cmd_next_claims_when_daemon_inactive(self):
+        cmd_send(self.cfg, self.store, self.tmux, "dev-1", "faça Z", sender="leader")
+        rc = cmd_next(self.store, {"SAC_AGENT": "dev-1"})
+        self.assertEqual(rc, 0)
+        self.assertEqual(self.store.pending("dev-1"), [])
+        self.assertEqual(len(self.store.claimed("dev-1")), 1, "sem daemon: vai para claimed")
+        log = (self.store.root / "log.jsonl").read_text(encoding="utf-8")
+        self.assertNotIn("ack", log)
+        self.assertIn("next", log)
+
+    def test_cmd_next_reply_legacy_auto_ack(self):
+        from sac.commands import _daemon_active
+        task_mid = self.store.send("leader", "dev-1", "task", now=datetime(2026, 1, 1, 0, 0, 0))
+        self.store.next("dev-1")
+        self.store.send("dev-1", "leader", "reply", now=datetime(2026, 1, 1, 0, 0, 1))
+        self.assertFalse(_daemon_active(self.store))
+        rc = cmd_next(self.store, {"SAC_AGENT": "leader"})
+        self.assertEqual(rc, 0)
+        self.assertEqual(self.store.pending("leader"), [])
+        self.assertEqual(self.store.claimed("leader"), [], "reply auto-ackada (não fica claimed)")
+        self.assertEqual(len(list((self.store.root / "done" / "leader").glob("*.msg"))), 1)
+        log = (self.store.root / "log.jsonl").read_text(encoding="utf-8")
+        self.assertIn("deliver_reply", log, "reply legado deve logar deliver_reply")
+
+    def test_cmd_next_task_legacy_claimed(self):
+        cmd_send(self.cfg, self.store, self.tmux, "dev-1", "task", sender="leader")
+        rc = cmd_next(self.store, {"SAC_AGENT": "dev-1"})
+        self.assertEqual(rc, 0)
+        self.assertEqual(len(self.store.claimed("dev-1")), 1, "task (sem reply) claimed")
+        log = (self.store.root / "log.jsonl").read_text(encoding="utf-8")
+        self.assertNotIn("deliver_reply", log)
 
     def test_done_completes_cycle(self):
         mid = cmd_send(self.cfg, self.store, self.tmux, "dev-1", "faça X", sender="leader")
@@ -104,6 +171,29 @@ class CommandsTest(unittest.TestCase):
         log = (self.store.root / "log.jsonl").read_text(encoding="utf-8")
         self.assertIn("loop_error", log)
         self.assertIn("simulated IO error", log)
+
+    def test_cmd_log_no_follow_no_file(self):
+        rc = cmd_log(self.store, follow=False)
+        self.assertEqual(rc, 0)
+
+    def test_cmd_log_follow_waits_for_file(self):
+        from unittest.mock import patch
+        import threading
+        (self.store.root).mkdir(parents=True, exist_ok=True)
+        started = threading.Event()
+        done = threading.Event()
+        def run_log():
+            started.set()
+            cmd_log(self.store, follow=True)
+            done.set()
+        t = threading.Thread(target=run_log, daemon=True)
+        t.start()
+        started.wait(timeout=5)
+        time.sleep(0.3)
+        self.assertFalse(done.is_set(), "deve estar esperando o arquivo")
+        (self.store.root / "log.jsonl").write_text("line\n", encoding="utf-8")
+        time.sleep(0.5)
+        self.assertFalse(done.is_set(), "entrou no loop de leitura (follow)")
 
 
 class UpDownStatusTest(unittest.TestCase):
@@ -177,9 +267,25 @@ class UpDownStatusTest(unittest.TestCase):
         r = FakeRunner(rc=0, outputs={"list-panes": "%1|env SAC_AGENT=leader kimi\n"})
         t = Tmux("sac-test", runner=r)
         self.store.send("user", "auditor", "orphan_msg", now=datetime(2026, 1, 1, 0, 0, 0))
-        self.assertEqual(cmd_status(self.cfg, self.store, t, clean=True), 0)
+        self.assertEqual(cmd_status(self.cfg, self.store, t, clean=True, yes=True), 0)
         self.assertFalse((self.store.root / "inbox" / "auditor").exists(),
                           "inbox do órfão deve ser removida")
+
+    def test_cmd_status_dry_run(self):
+        r = FakeRunner(rc=0, outputs={"list-panes": "%1|env SAC_AGENT=leader kimi\n"})
+        t = Tmux("sac-test", runner=r)
+        self.store.send("user", "auditor", "orphan_msg", now=datetime(2026, 1, 1, 0, 0, 0))
+        self.assertEqual(cmd_status(self.cfg, self.store, t, clean=True, yes=False), 0)
+        self.assertTrue((self.store.root / "inbox" / "auditor").exists(),
+                         "sem --yes, orphan não deve ser removida")
+
+    def test_cmd_status_clean_yes(self):
+        r = FakeRunner(rc=0, outputs={"list-panes": "%1|env SAC_AGENT=leader kimi\n"})
+        t = Tmux("sac-test", runner=r)
+        self.store.send("user", "auditor", "orphan_msg", now=datetime(2026, 1, 1, 0, 0, 0))
+        self.assertEqual(cmd_status(self.cfg, self.store, t, clean=True, yes=True), 0)
+        self.assertFalse((self.store.root / "inbox" / "auditor").exists(),
+                          "with --yes, orphan deve ser removida")
 
     def test_log_prints_events(self):
         self.store.send("leader", "dev-1", "t1")
@@ -199,14 +305,34 @@ class UpDownStatusTest(unittest.TestCase):
         cmd_up(self.cfg, self.store, t, self.root, boot_wait=0)
         hook_call = [c for c in r.calls if c[1] == "set-hook"][0]
         hook_str = " ".join(hook_call)
-        self.assertIn("sac sidebar", hook_str, "hook deve localizar sidebar por start_command")
-        self.assertIn("##{pane_id}", hook_str, "hook deve escapar ##{pane_id} para tmux")
-        self.assertIn("list-panes", hook_str, "hook deve usar list-panes")
-        self.assertIn("resize-pane", hook_str, "hook deve conter resize-pane")
-        self.assertIn("-x 30", hook_str, "hook deve ter largura 30")
-        self.assertIn("leader", hook_str, "hook deve referenciar janela leader")
-        self.assertIn("dev-1", hook_str, "hook deve referenciar janela dev-1")
-        self.assertIn("true", hook_str, "hook deve terminar com true (exit 0 garantido)")
+        self.assertIn("sac sidebar", hook_str)
+        self.assertIn("##{pane_id}", hook_str)
+        self.assertIn("list-panes", hook_str)
+        self.assertIn("resize-pane", hook_str)
+        self.assertIn("-x 30", hook_str)
+        self.assertIn("leader", hook_str)
+        self.assertIn("dev-1", hook_str)
+        self.assertIn("true", hook_str)
+
+    def test_up_uses_per_agent_boot_wait(self):
+        from unittest.mock import patch
+        r = FakeRunner(outputs={("rc", "has-session"): 1, "list-windows": "leader\ndev-1\ndash\n"})
+        t = Tmux("sac-test", runner=r)
+        cfg = load_config(self.root / "sac.toml")
+        cfg.agents[1].boot_wait = 12.0
+        with patch("sac.commands.time.sleep") as mock_sleep:
+            cmd_up(cfg, self.store, t, self.root, boot_wait=None)
+        sleep_calls = [c.args[0] for c in mock_sleep.call_args_list if c.args[0] > 0]
+        self.assertEqual(len(sleep_calls), 2, "deve dormir uma vez por agente")
+        self.assertEqual(sleep_calls[0], 8.0, "agente sem override usa global 8")
+        self.assertEqual(sleep_calls[1], 12.0, "agente com boot_wait=12 usa 12")
+
+    def test_hook_valid_structure(self):
+        r = FakeRunner(outputs={("rc", "has-session"): 1, "list-windows": "leader\ndev-1\ndash\n"})
+        t = Tmux("sac-test", runner=r)
+        cmd_up(self.cfg, self.store, t, self.root, boot_wait=0)
+        hook_call = [c for c in r.calls if c[1] == "set-hook"][0]
+        hook_str = " ".join(hook_call)
 
     def test_hook_with_socket(self):
         r = FakeRunner(outputs={

@@ -1,7 +1,7 @@
 [session]
 name = "sac"
 notify_interval = 10
-poke_stale_after = 10
+poke_stale_after = 120
 boot_wait = 3
 socket = "~/.sac/tmux.sock"   # socket dedicado (acessível via SSH/Tailscale); comente para usar o default do tmux
 

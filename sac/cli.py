@@ -25,6 +25,7 @@ def _build_parser() -> argparse.ArgumentParser:
     sub.add_parser("down", help="encerra a sessão (preserva .sac/)")
     sp = sub.add_parser("status", help="visão geral dos agentes e filas")
     sp.add_argument("--clean", action="store_true", help="remove mensagens órfãs de agentes removidos do config")
+    sp.add_argument("--yes", action="store_true", help="confirma execução do --clean (sem --yes, apenas simula)")
     sub.add_parser("attach", help="atacha à sessão tmux")
     sub.add_parser("next", help="puxa a próxima mensagem da sua inbox (agente)")
 
@@ -84,7 +85,7 @@ def main(argv: list[str] | None = None) -> int:
             case "down":
                 return cmd_down(cfg, tmux)
             case "status":
-                return cmd_status(cfg, store, tmux, clean=args.clean)
+                return cmd_status(cfg, store, tmux, clean=args.clean, yes=args.yes)
             case "sidebar":
                 return cmd_sidebar(cfg, store, tmux)
             case "attach":

@@ -26,7 +26,15 @@ class Daemon:
         self.store = store
         self.tmux = tmux
         self._running = True
-        self._last_poke: dict[str, float] = {}
+        self._poke_state: dict[str, dict[str, float]] = {}
+        self._poke_count: dict[str, dict[str, int]] = {}
+
+    def _poke_interval(self, msg_id: str) -> float:
+        for agent_name, msgs in self._poke_state.items():
+            if msg_id in msgs:
+                n = self._poke_count.get(agent_name, {}).get(msg_id, 0)
+                return min(self.cfg.poke_stale_after * (2 ** n), 600)
+        return 0.0
 
     def _pid_path(self) -> Path:
         return self.store.root / "daemon.pid"
@@ -65,17 +73,22 @@ class Daemon:
             stale = self.store.stale(name, self.cfg.poke_stale_after)
             stale_ids = [m for m in claimed if m in stale]
             if stale_ids:
-                last = self._last_poke.get(name, 0.0)
-                if time.monotonic() - last < self.cfg.notify_interval:
-                    return
-                pid = self.tmux.find_pane_id(name)
-                if pid:
-                    self.tmux.send_keys(
-                        pid,
-                        f"SAC: tarefa {stale_ids[0]} pendente — rode `sac done {stale_ids[0]}`"
-                    )
-                    self.store.log("poke", agent=name, id=stale_ids[0])
-                    self._last_poke[name] = time.monotonic()
+                sid = stale_ids[0]
+                interval = self._poke_interval(sid)
+                last = self._poke_state.get(name, {}).get(sid, 0.0)
+                if not (time.monotonic() - last < interval):
+                    pid = self.tmux.find_pane_id(name)
+                    if pid:
+                        self.tmux.send_keys(
+                            pid,
+                            f"SAC: tarefa {sid} pendente — rode `sac done {sid}`"
+                        )
+                        self.store.log("poke", agent=name, id=sid)
+                        self._poke_state.setdefault(name, {})[sid] = time.monotonic()
+                        self._poke_count.setdefault(name, {})[sid] = self._poke_count.get(name, {}).get(sid, 0) + 1
+            peek = self.store.peek_next(name)
+            if peek and peek[1]:
+                self._deliver_next(name)
             return
 
         if self.store.pending(name):
@@ -92,6 +105,8 @@ class Daemon:
         self.tmux.paste(pid, content)
         self.tmux.press_enter(pid)
         self.store.log("deliver", agent=name, id=msg.id, sender=msg.sender)
+        if msg.reply_to:
+            self.store.finish_reply(name, msg.id)
 
 
 def run_daemon(cfg: Config, store: Store, tmux: Tmux) -> int:

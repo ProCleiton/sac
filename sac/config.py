@@ -17,6 +17,7 @@ class AgentConfig:
     args: list[str]
     role: str  # "leader" | "aux"
     prompt_file: str | None = None
+    boot_wait: float | None = None
 
 
 @dataclass
@@ -31,7 +32,7 @@ class Config:
     session_name: str
     notify_interval: int = 30
     poke_stale_after: int = 120
-    boot_wait: int = 3
+    boot_wait: int = 8
     socket: str | None = None
     agents: list[AgentConfig] = field(default_factory=list)
     loops: list[LoopConfig] = field(default_factory=list)
@@ -63,9 +64,17 @@ def load_config(path: Path) -> Config:
             args=list(a.get("args", [])),
             role=a.get("role", "aux"),
             prompt_file=a.get("prompt_file"),
+            boot_wait=a.get("boot_wait"),
         )
         for a in data.get("agents", [])
     ]
+    for a in data.get("agents", []):
+        if a.get("boot_wait") is not None:
+            bw = a["boot_wait"]
+            if not isinstance(bw, (int, float)):
+                raise ConfigError(f"boot_wait deve ser numérico em agente '{a['name']}': {bw}")
+            if bw < 0:
+                raise ConfigError(f"boot_wait não pode ser negativo em agente '{a['name']}': {bw}")
     loops = [
         LoopConfig(
             name=l["name"],
@@ -93,7 +102,7 @@ def load_config(path: Path) -> Config:
         session_name=session.get("name", "sac"),
         notify_interval=int(session.get("notify_interval", 30)),
         poke_stale_after=int(session.get("poke_stale_after", 120)),
-        boot_wait=int(session.get("boot_wait", 3)),
+        boot_wait=int(session.get("boot_wait", 8)),
         socket=(str(Path(session["socket"]).expanduser()) if session.get("socket") else None),
         agents=agents,
         loops=loops,
