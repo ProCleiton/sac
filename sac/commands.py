@@ -31,8 +31,11 @@ def _daemon_active(store: Store) -> bool:
 
 
 def cmd_send(cfg: Config, store: Store, tmux: Tmux, to: str, body: str, sender: str = "user") -> str:
-    cfg.agent(to)
+    if to != "user":
+        cfg.agent(to)
     mid = store.send(sender, to, body)
+    if to == "user":
+        return mid
     if _daemon_active(store):
         return mid
     if tmux.has_session():
@@ -53,7 +56,12 @@ def cmd_next(store: Store, env: Mapping[str, str]) -> int:
     if not agent:
         print("erro: SAC_AGENT não definido (rode dentro de um pane de agente)", file=sys.stderr)
         return 2
-    msg = store.next(agent)
+    if _daemon_active(store):
+        msg = store.ack(agent)
+    else:
+        msg = store.next(agent)
+        if msg and msg.reply_to:
+            store.finish_reply(agent, msg.id)
     if msg is None:
         print("inbox vazia")
         return 0
@@ -177,7 +185,6 @@ def cmd_up(cfg: Config, store: Store, tmux: Tmux, project_root: Path,
     if tmux.has_session():
         print(f" sessão '{tmux.session}' já existe — use `sac attach`")
         return 0
-    _boot = boot_wait if boot_wait is not None else cfg.boot_wait
     agents = sorted(cfg.agents, key=lambda a: a.role != "leader")
     harness_ids = {}
     first = True
@@ -201,10 +208,11 @@ def cmd_up(cfg: Config, store: Store, tmux: Tmux, project_root: Path,
     leader_name = agents[0].name
     tmux.select_window(leader_name)
     tmux.select_pane(harness_ids[leader_name])
-    # boot wait + prompts
-    if _boot > 0:
-        time.sleep(_boot)
+    # boot wait + prompts (per-agent)
     for agent in agents:
+        _boot = boot_wait if boot_wait is not None else (agent.boot_wait if agent.boot_wait is not None else cfg.boot_wait)
+        if _boot > 0:
+            time.sleep(_boot)
         pid = harness_ids.get(agent.name)
         if pid:
             _inject_prompt(tmux, agent, project_root, pane_id=pid)
@@ -262,12 +270,18 @@ def cmd_down(cfg: Config, tmux: Tmux) -> int:
     return 0
 
 
-def cmd_status(cfg: Config, store: Store, tmux: Tmux, clean: bool = False) -> int:
+def cmd_status(cfg: Config, store: Store, tmux: Tmux, clean: bool = False, yes: bool = False) -> int:
     if clean:
         names = [a.name for a in cfg.agents]
-        stats = store.clean_orphans(names)
-        print(f"limpeza: {stats['inbox_files']} inbox, {stats['claimed_files']} claimed removidos "
-              f"({len(stats['agents_removed'])} agentes)")
+        if yes:
+            stats = store.clean_orphans(names, dry_run=False)
+            print(f"limpeza: {stats['inbox_files']} inbox, {stats['claimed_files']} claimed removidos "
+                  f"({len(stats['agents_removed'])} agentes)")
+        else:
+            stats = store.clean_orphans(names, dry_run=True)
+            agents = ", ".join(stats["agents_removed"]) or "nenhum"
+            print(f"simulação: {stats['inbox_files']} inbox, {stats['claimed_files']} claimed — "
+                  f"agentes órfãos: {agents} (use --yes para executar)")
     up = tmux.has_session()
     print(f"sessão '{tmux.session}': {'ativa' if up else 'inativa'}")
     for a in cfg.agents:
@@ -293,23 +307,48 @@ def cmd_recv(cfg: Config, tmux: Tmux, agent: str, lines: int = 200) -> int:
     return 0
 
 
-def notify_sweep(cfg: Config, store: Store, tmux: Tmux) -> dict[str, int]:
+def notify_sweep(cfg: Config, store: Store, tmux: Tmux, poke_state: dict | None = None) -> dict[str, int]:
     pokes = {}
     for a in cfg.agents:
         stale = store.stale(a.name, cfg.poke_stale_after)
-        if stale:
-            pid = tmux.find_pane_id(a.name)
-            if pid:
-                tmux.send_keys(pid, f"SAC: {len(stale)} mensagem(ns) aguardando — rode `sac next`")
-                store.log("poke", agent=a.name, count=len(stale))
-                pokes[a.name] = len(stale)
+        if not stale:
+            continue
+        ids_pending = set(store.pending(a.name) + store.claimed(a.name))
+        stale = [m for m in stale if m in ids_pending]
+        if not stale:
+            continue
+        stale = [m for m in stale if _should_poke(m, poke_state, cfg)]
+        if not stale:
+            continue
+        pid = tmux.find_pane_id(a.name)
+        if pid:
+            tmux.send_keys(pid, f"SAC: {len(stale)} mensagem(ns) aguardando — rode `sac next`")
+            store.log("poke", agent=a.name, count=len(stale))
+            if poke_state is not None:
+                for m in stale:
+                    poke_state.setdefault(a.name, {})[m] = time.monotonic()
+            pokes[a.name] = len(stale)
     return pokes
 
 
+def _should_poke(msg_id: str, poke_state: dict | None, cfg: Config) -> bool:
+    if poke_state is None:
+        return True
+    for agent_state in poke_state.values():
+        if msg_id in agent_state:
+            last = agent_state[msg_id]
+            n = sum(1 for v in agent_state.values() if v <= last)
+            interval = min(cfg.poke_stale_after * (2 ** n), 600)
+            if time.monotonic() - last < interval:
+                return False
+    return True
+
+
 def cmd_notify(cfg: Config, store: Store, tmux: Tmux, once: bool = False) -> int:
+    poke_state: dict[str, dict[str, float]] = {}
     if once:
         try:
-            notify_sweep(cfg, store, tmux)
+            notify_sweep(cfg, store, tmux, poke_state=poke_state)
         except Exception as exc:
             store.log("loop_error", error=str(exc))
         return 0
@@ -317,7 +356,7 @@ def cmd_notify(cfg: Config, store: Store, tmux: Tmux, once: bool = False) -> int
     try:
         while True:
             try:
-                notify_sweep(cfg, store, tmux)
+                notify_sweep(cfg, store, tmux, poke_state=poke_state)
             except Exception as exc:
                 store.log("loop_error", error=str(exc))
             time.sleep(cfg.notify_interval)
@@ -335,8 +374,12 @@ def cmd_run(cfg: Config, store: Store, tmux: Tmux, loop_name: str, task: str) ->
 def cmd_log(store: Store, follow: bool = False) -> int:
     path = store.root / "log.jsonl"
     if not path.is_file():
-        print("log vazio")
-        return 0
+        if follow:
+            while not path.is_file():
+                time.sleep(0.5)
+        else:
+            print("log vazio")
+            return 0
     with path.open(encoding="utf-8") as f:
         while True:
             try:

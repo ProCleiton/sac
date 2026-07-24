@@ -42,7 +42,7 @@ class LoadConfigTest(unittest.TestCase):
         self.assertEqual(cfg.session_name, "sac-test")
         self.assertEqual(cfg.notify_interval, 30)
         self.assertEqual(cfg.poke_stale_after, 120)
-        self.assertEqual(cfg.boot_wait, 3)
+        self.assertEqual(cfg.boot_wait, 8)
         self.assertEqual(len(cfg.agents), 2)
         self.assertEqual(cfg.leader.name, "leader")
         self.assertEqual(cfg.agent("dev-1").command, "opencode")
@@ -53,11 +53,21 @@ class LoadConfigTest(unittest.TestCase):
         cfg = self._load(VALID.replace("notify_interval = 30\n", "").replace("poke_stale_after = 120\n", ""))
         self.assertEqual(cfg.notify_interval, 30)
         self.assertEqual(cfg.poke_stale_after, 120)
-        self.assertEqual(cfg.boot_wait, 3)
+        self.assertEqual(cfg.boot_wait, 8)
 
     def test_boot_wait_custom(self):
         cfg = self._load(VALID.replace("name = \"sac-test\"", "name = \"sac-test\"\nboot_wait = 3"))
         self.assertEqual(cfg.boot_wait, 3)
+
+    def test_config_default_boot_wait_8(self):
+        cfg = self._load(VALID.replace("notify_interval = 30\n", "").replace("poke_stale_after = 120\n", ""))
+        self.assertEqual(cfg.boot_wait, 8, "default global deve ser 8")
+
+    def test_config_agent_boot_wait(self):
+        text = VALID + '\n[[agents]]\nname = "slow"\ncommand = "opencode"\nrole = "aux"\nboot_wait = 12\n'
+        cfg = self._load(text)
+        self.assertEqual(cfg.agent("slow").boot_wait, 12)
+        self.assertIsNone(cfg.agent("dev-1").boot_wait, "agente sem campo herda None")
 
     def test_no_leader_fails(self):
         with self.assertRaises(ConfigError):
@@ -87,6 +97,21 @@ class LoadConfigTest(unittest.TestCase):
         cfg = self._load(VALID)
         with self.assertRaises(ConfigError):
             cfg.agent("fantasma")
+
+    def test_agent_boot_wait_invalid_string(self):
+        text = VALID + '\n[[agents]]\nname = "slow"\ncommand = "opencode"\nrole = "aux"\nboot_wait = "oito"\n'
+        with self.assertRaises(ConfigError):
+            self._load(text)
+
+    def test_agent_boot_wait_negative(self):
+        text = VALID + '\n[[agents]]\nname = "slow"\ncommand = "opencode"\nrole = "aux"\nboot_wait = -1\n'
+        with self.assertRaises(ConfigError):
+            self._load(text)
+
+    def test_agent_boot_wait_zero(self):
+        text = VALID + '\n[[agents]]\nname = "fast"\ncommand = "kimi"\nrole = "aux"\nboot_wait = 0\n'
+        cfg = self._load(text)
+        self.assertEqual(cfg.agent("fast").boot_wait, 0)
 
 
 if __name__ == "__main__":

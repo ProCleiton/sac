@@ -105,6 +105,140 @@ class StoreTest(unittest.TestCase):
         self.assertEqual(stats["inbox_files"], 0)
         self.assertEqual(stats["claimed_files"], 0)
 
+    def test_store_ack_moves_to_done(self):
+        mid = self.store.send("leader", "dev-1", "ack task", now=T0)
+        msg = self.store.ack("dev-1")
+        self.assertIsNotNone(msg)
+        self.assertEqual(msg.body, "ack task")
+        self.assertEqual(msg.sender, "leader")
+        self.assertEqual(self.store.pending("dev-1"), [])
+        self.assertEqual(self.store.claimed("dev-1"), [])
+        done_files = list((self.root / "done" / "dev-1").glob("*.msg"))
+        self.assertEqual(len(done_files), 1)
+        log = (self.root / "log.jsonl").read_text(encoding="utf-8")
+        self.assertIn("ack", log)
+
+    def test_store_ack_empty_returns_none(self):
+        self.assertIsNone(self.store.ack("dev-1"))
+
+    def test_parse_message_with_reply_to(self):
+        d = self.root / "inbox" / "dev-1"
+        d.mkdir(parents=True, exist_ok=True)
+        (d / "test.msg").write_text(
+            "id: 20260724-100000-001-from-leader\n"
+            "from: leader\n"
+            "to: dev-1\n"
+            "ts: 2026-07-24T10:00:00\n"
+            "reply_to: 20260724-095959-001-from-user\n\nbody", encoding="utf-8")
+        msg = self.store._parse(d / "test.msg")
+        self.assertEqual(msg.reply_to, "20260724-095959-001-from-user")
+
+    def test_parse_message_without_reply_to(self):
+        d = self.root / "inbox" / "dev-1"
+        d.mkdir(parents=True, exist_ok=True)
+        (d / "test.msg").write_text(
+            "id: x\nfrom: leader\nto: dev-1\nts: 2026-07-24T10:00:00\n\nbody", encoding="utf-8")
+        msg = self.store._parse(d / "test.msg")
+        self.assertIsNone(msg.reply_to)
+
+    def test_store_send_no_claimed_no_reply(self):
+        mid = self.store.send("leader", "dev-1", "task", now=T0)
+        msg = self.store._parse(self.root / "inbox" / "dev-1" / f"{mid}.msg")
+        self.assertIsNone(msg.reply_to, "sem claimed, sem reply_to")
+
+    def test_store_send_multi_claimed_different_senders_uses_match(self):
+        self.store.send("leader", "dev-1", "task1", now=T0)
+        self.store.send("auditor", "dev-1", "task2", now=T0 + timedelta(seconds=1))
+        self.store.next("dev-1")
+        self.store.next("dev-1")
+        mid = self.store.send("dev-1", "leader", "resposta", now=T0 + timedelta(seconds=2))
+        msg = self.store._parse(self.root / "inbox" / "leader" / f"{mid}.msg")
+        task1_id = self.store._ids("claimed", "dev-1")[0]
+        self.assertEqual(msg.reply_to, task1_id,
+                         "deve encontrar a claimed cujo sender coincide com recipient")
+
+    def test_store_send_reply_marked(self):
+        task_mid = self.store.send("leader", "dev-1", "faça X", now=T0)
+        self.store.next("dev-1")
+        mid = self.store.send("dev-1", "leader", "pronto", now=T0 + timedelta(seconds=1))
+        msg = self.store._parse(self.root / "inbox" / "leader" / f"{mid}.msg")
+        self.assertEqual(msg.reply_to, task_mid)
+
+    def test_store_send_multi_claimed_uses_most_recent(self):
+        self.store.send("leader", "dev-1", "t1", now=T0)
+        self.store.send("leader", "dev-1", "t2", now=T0 + timedelta(seconds=1))
+        self.store.next("dev-1")
+        self.store.next("dev-1")
+        mid = self.store.send("dev-1", "leader", "resposta", now=T0 + timedelta(seconds=2))
+        msg = self.store._parse(self.root / "inbox" / "leader" / f"{mid}.msg")
+        task_ids = self.store._ids("claimed", "dev-1")
+        self.assertIsNotNone(msg.reply_to, "com 2 claimed, deve inferir a mais recente")
+        self.assertEqual(msg.reply_to, task_ids[-1], "deve usar a última (mais recente) claimed")
+
+    def test_finish_reply_moves_to_done(self):
+        mid = self.store.send("leader", "dev-1", "task", now=T0)
+        self.store.next("dev-1")
+        self.store.finish_reply("dev-1", mid)
+        self.assertEqual(self.store.claimed("dev-1"), [], "reply não fica em claimed")
+        done_files = list((self.root / "done" / "dev-1").glob("*.msg"))
+        self.assertEqual(len(done_files), 1)
+        log = (self.root / "log.jsonl").read_text(encoding="utf-8")
+        self.assertIn("deliver_reply", log)
+
+    def test_finish_reply_unknown_fails(self):
+        with self.assertRaises(StoreError):
+            self.store.finish_reply("dev-1", "nao-existe")
+
+    def test_peek_next_returns_reply(self):
+        mid = self.store.send("leader", "dev-1", "task", now=T0)
+        self.store.next("dev-1")
+        self.store.send("dev-1", "leader", "reply", now=T0 + timedelta(seconds=1))
+        result = self.store.peek_next("leader")
+        self.assertIsNotNone(result)
+        id_, reply_to = result
+        self.assertIsNotNone(reply_to, "pending reply deve ter reply_to")
+        self.assertEqual(len(self.store.pending("leader")), 1, "peek não deve consumir")
+
+    def test_peek_next_empty_returns_none(self):
+        self.assertIsNone(self.store.peek_next("dev-1"))
+
+    def test_peek_next_task_no_reply(self):
+        self.store.send("user", "dev-1", "task", now=T0)
+        result = self.store.peek_next("dev-1")
+        self.assertIsNotNone(result)
+        id_, reply_to = result
+        self.assertIsNone(reply_to, "task sem reply_to")
+
+    def test_clean_orphans_dry_run_lists_only(self):
+        self.store.send("user", "auditor", "msg1", now=T0)
+        self.store.send("user", "leader", "msg2", now=T0)
+        stats = self.store.clean_orphans(["leader"], dry_run=True)
+        self.assertIn("inbox_files", stats)
+        self.assertIn("claimed_files", stats)
+        self.assertIn("agents_removed", stats)
+        self.assertTrue(
+            (self.root / "inbox" / "auditor").exists(),
+            "dry_run: diretório não deve ser removido")
+        self.assertTrue(
+            (self.root / "inbox" / "leader").exists(),
+            "dry_run: inbox de agente válido preservado")
+
+    def test_clean_orphans_yes_removes(self):
+        self.store.send("user", "auditor", "msg1", now=T0)
+        self.store.clean_orphans(["leader"], dry_run=False)
+        self.assertFalse(
+            (self.root / "inbox" / "auditor").exists(),
+            "dry_run=False: diretório deve ser removido")
+
+    def test_clean_log_event_dry_run(self):
+        self.store.send("user", "auditor", "msg1", now=T0)
+        self.store.clean_orphans(["leader"], dry_run=True)
+        log = (self.root / "log.jsonl").read_text(encoding="utf-8")
+        import json
+        last_line = json.loads(log.strip().splitlines()[-1])
+        self.assertEqual(last_line["event"], "clean")
+        self.assertTrue(last_line.get("dry_run"), "log deve conter dry_run: true")
+
 
 if __name__ == "__main__":
     unittest.main()

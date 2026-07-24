@@ -1,4 +1,5 @@
 import tempfile
+import time
 import unittest
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -101,6 +102,44 @@ class NotifyTest(unittest.TestCase):
         log = (self.store.root / "log.jsonl").read_text(encoding="utf-8")
         self.assertIn("loop_error", log)
         self.assertIn("simulated stale failure", log)
+
+    def test_notify_sweep_recheck_before_poke(self):
+        old = NOW - timedelta(seconds=300)
+        self.store.send("leader", "dev-1", "velha", now=old)
+        self.store.next("dev-1")
+        self.store.done("dev-1", self.store.claimed("dev-1")[0], "done", now=NOW)
+        result = notify_sweep(self.cfg, self.store, self.tmux)
+        self.assertEqual(result, {}, "mensagem recém-done não deve gerar poke")
+
+    def test_notify_sweep_backoff(self):
+        old = NOW - timedelta(seconds=300)
+        self.store.send("leader", "dev-1", "velha", now=old)
+        self.store.next("dev-1")
+        mid = self.store.claimed("dev-1")[0]
+        poke_state = {"dev-1": {mid: time.monotonic()}}
+        result = notify_sweep(self.cfg, self.store, self.tmux, poke_state=poke_state)
+        self.assertEqual(result, {}, "com backoff, poke não deve ser enviado (tempo insuficiente)")
+
+    def test_notify_backoff_wired_via_cmd_notify(self):
+        old = NOW - timedelta(seconds=300)
+        self.store.send("leader", "dev-1", "velha", now=old)
+        self.store.next("dev-1")
+        poke_state: dict = {}
+        from unittest.mock import patch
+        with patch("sac.commands.time.sleep"):
+            r1 = notify_sweep(self.cfg, self.store, self.tmux, poke_state=poke_state)
+        self.assertIn("dev-1", r1, "1ª chamada: poke enviado")
+        with patch("sac.commands.time.sleep"):
+            r2 = notify_sweep(self.cfg, self.store, self.tmux, poke_state=poke_state)
+        self.assertEqual(r2, {}, "2ª chamada com mesmo poke_state: backoff respeitado")
+
+    def test_notify_sweep_recheck_before_poke(self):
+        old = NOW - timedelta(seconds=300)
+        self.store.send("leader", "dev-1", "velha", now=old)
+        self.store.next("dev-1")
+        self.store.done("dev-1", self.store.claimed("dev-1")[0], "done", now=NOW)
+        result = notify_sweep(self.cfg, self.store, self.tmux)
+        self.assertEqual(result, {}, "mensagem recém-done não deve gerar poke")
 
 
 if __name__ == "__main__":

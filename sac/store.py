@@ -19,6 +19,7 @@ class Message:
     recipient: str
     timestamp: str
     body: str
+    reply_to: str | None = None
 
 
 class Store:
@@ -40,7 +41,8 @@ class Store:
     def _parse(path: Path) -> Message:
         head, _, body = path.read_text(encoding="utf-8").partition("\n\n")
         meta = dict(line.split(": ", 1) for line in head.splitlines())
-        return Message(meta["id"], meta["from"], meta["to"], meta["ts"], body)
+        return Message(meta["id"], meta["from"], meta["to"], meta["ts"], body,
+                       reply_to=meta.get("reply_to"))
 
     def send(self, sender: str, recipient: str, body: str, now: datetime | None = None) -> str:
         now = now or datetime.now()
@@ -50,10 +52,21 @@ class Store:
             existing += [i for i in self._ids(kind, recipient) if i.startswith(stamp)]
         seq = max((int(i.split("-")[2]) for i in existing), default=0) + 1
         mid = f"{stamp}-{seq:03d}-from-{sender}"
-        content = f"id: {mid}\nfrom: {sender}\nto: {recipient}\nts: {now.isoformat()}\n\n{body}"
+        reply_to = self._infer_reply_to(sender, recipient)
+        reply_line = f"reply_to: {reply_to}\n" if reply_to else ""
+        content = f"id: {mid}\nfrom: {sender}\nto: {recipient}\nts: {now.isoformat()}\n{reply_line}\n{body}"
         (self._dir("inbox", recipient) / f"{mid}.msg").write_text(content, encoding="utf-8")
         self.log("send", now=now, sender=sender, to=recipient, id=mid)
         return mid
+
+    def _infer_reply_to(self, sender: str, recipient: str) -> str | None:
+        claimed = self._ids("claimed", sender)
+        for cid in reversed(claimed):
+            src = self.root / "claimed" / sender / f"{cid}.msg"
+            msg = self._parse(src)
+            if msg.sender == recipient:
+                return msg.id
+        return None
 
     def next(self, agent: str) -> Message | None:
         ids = self._ids("inbox", agent)
@@ -72,13 +85,38 @@ class Store:
         src.rename(self._dir("done", agent) / src.name)
         self.log("done", now=now, agent=agent, id=msg_id, summary=summary)
 
+    def finish_reply(self, agent: str, msg_id: str) -> None:
+        src = self.root / "claimed" / agent / f"{msg_id}.msg"
+        if not src.is_file():
+            raise StoreError(f"reply não encontrada em claimed para {agent}: {msg_id}")
+        src.rename(self._dir("done", agent) / src.name)
+        self.log("deliver_reply", agent=agent, id=msg_id)
+
+    def peek_next(self, agent: str) -> tuple[str, str | None] | None:
+        ids = self._ids("inbox", agent)
+        if not ids:
+            return None
+        src = self.root / "inbox" / agent / f"{ids[0]}.msg"
+        msg = self._parse(src)
+        return (msg.id, msg.reply_to)
+
+    def ack(self, agent: str) -> Message | None:
+        ids = self._ids("inbox", agent)
+        if not ids:
+            return None
+        src = self.root / "inbox" / agent / f"{ids[0]}.msg"
+        msg = self._parse(src)
+        src.rename(self._dir("done", agent) / src.name)
+        self.log("ack", agent=agent, id=msg.id)
+        return msg
+
     def pending(self, agent: str) -> list[str]:
         return self._ids("inbox", agent)
 
     def claimed(self, agent: str) -> list[str]:
         return self._ids("claimed", agent)
 
-    def clean_orphans(self, valid_agents: list[str]) -> dict[str, int]:
+    def clean_orphans(self, valid_agents: list[str], dry_run: bool = False) -> dict[str, int]:
         valid = set(valid_agents)
         inbox_files = 0
         claimed_files = 0
@@ -93,14 +131,16 @@ class Store:
                 if agent_dir.name in valid:
                     continue
                 files = len(list(agent_dir.glob("*.msg")))
-                shutil.rmtree(agent_dir)
+                if not dry_run:
+                    shutil.rmtree(agent_dir)
                 if kind == "inbox":
                     inbox_files += files
                     removed_agents.append(agent_dir.name)
                 else:
                     claimed_files += files
         self.log("clean", agents_removed=list(set(removed_agents)),
-                 inbox_files=inbox_files, claimed_files=claimed_files)
+                 inbox_files=inbox_files, claimed_files=claimed_files,
+                 dry_run=dry_run)
         return {"inbox_files": inbox_files, "claimed_files": claimed_files, "agents_removed": removed_agents}
 
     def stale(self, agent: str, seconds: int, now: datetime | None = None) -> list[str]:
