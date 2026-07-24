@@ -1,3 +1,4 @@
+import io
 import os
 import tempfile
 import time
@@ -287,6 +288,52 @@ class UpDownStatusTest(unittest.TestCase):
         self.assertFalse((self.store.root / "inbox" / "auditor").exists(),
                           "with --yes, orphan deve ser removida")
 
+    def test_up_progress_lines(self):
+        from io import StringIO
+        r = FakeRunner(outputs={("rc", "has-session"): 1, "list-windows": "leader\ndev-1\ndash\n"})
+        t = Tmux("sac-test", runner=r)
+        out = StringIO()
+        cmd_up(self.cfg, self.store, t, self.root, boot_wait=0, stdout=lambda s: out.write(s + "\n"))
+        output = out.getvalue()
+        self.assertIn("[1/2]", output, "deve mostrar progresso leader")
+        self.assertIn("[2/2]", output, "deve mostrar progresso dev-1")
+        self.assertIn("criando", output, "deve mencionar criacao")
+
+    def test_up_socket_dir_created(self):
+        sock_dir = self.root / ".sac-test-socket"
+        sock = sock_dir / "tmux.sock"
+        r = FakeRunner(outputs={
+            ("rc", "-S|has-session"): 1,
+            "-S|list-windows": "leader\ndev-1\ndash\n",
+        })
+        t = Tmux("sac-test", runner=r, socket=str(sock))
+        self.cfg.socket = str(sock)
+        self.assertFalse(sock_dir.exists())
+        cmd_up(self.cfg, self.store, t, self.root, boot_wait=0)
+        self.assertTrue(sock_dir.exists(), "diretorio do socket deve ser criado")
+
+    def test_up_aborts_on_tmux_error(self):
+        from sac.tmux import TmuxError
+        r = FakeRunner(outputs={
+            ("rc", "has-session"): 1,
+        }, rc=1, stderr="permission denied")
+        t = Tmux("sac-test", runner=r)
+        with self.assertRaises(TmuxError):
+            cmd_up(self.cfg, self.store, t, self.root, boot_wait=0)
+
+    def test_up_socket_dir_already_exists(self):
+        sock_dir = self.root / ".sac-test-socket"
+        sock_dir.mkdir(parents=True, exist_ok=True)
+        sock = sock_dir / "tmux.sock"
+        r = FakeRunner(outputs={
+            ("rc", "-S|has-session"): 1,
+            "-S|list-windows": "leader\ndev-1\ndash\n",
+        })
+        t = Tmux("sac-test", runner=r, socket=str(sock))
+        self.cfg.socket = str(sock)
+        cmd_up(self.cfg, self.store, t, self.root, boot_wait=0)
+        self.assertTrue(sock_dir.exists(), "diretorio existente não deve causar erro")
+
     def test_log_prints_events(self):
         self.store.send("leader", "dev-1", "t1")
         self.assertEqual(cmd_log(self.store), 0)
@@ -321,7 +368,8 @@ class UpDownStatusTest(unittest.TestCase):
         cfg = load_config(self.root / "sac.toml")
         cfg.agents[1].boot_wait = 12.0
         with patch("sac.commands.time.sleep") as mock_sleep:
-            cmd_up(cfg, self.store, t, self.root, boot_wait=None)
+            with patch("sac.commands.time.monotonic", return_value=1000.0):
+                cmd_up(cfg, self.store, t, self.root, boot_wait=None)
         sleep_calls = [c.args[0] for c in mock_sleep.call_args_list if c.args[0] > 0]
         self.assertEqual(len(sleep_calls), 2, "deve dormir uma vez por agente")
         self.assertEqual(sleep_calls[0], 8.0, "agente sem override usa global 8")
