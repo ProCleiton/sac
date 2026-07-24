@@ -2,7 +2,6 @@
 
 ## Purpose
 Arquivo de configuração `sac.toml` no formato TOML usando `tomllib` da stdlib Python (3.11+). Define a sessão tmux, os agentes participantes e os loops de trabalho declarados. As mesmas configurações de temporização (`notify_interval`, `poke_stale_after`) são usadas pelo daemon de mensageria. Validações: nomes únicos, exatamente um leader, referências de loop válidas.
-
 ## Requirements
 ### Requirement: Configuração de sessão tmux
 O sistema SHALL ler parâmetros da sessão tmux a partir de `[session]` no `sac.toml`.
@@ -86,3 +85,22 @@ O sistema SHALL expor métodos para lookup de agente por nome e acesso ao leader
 #### Scenario: Property leader
 - **WHEN** `config.leader` é acessado
 - **THEN** retorna o `AgentConfig` com `role = "leader"`
+
+### Requirement: Geração de sac.toml via template
+O sistema SHALL gerar um arquivo `sac.toml` válido a partir das respostas do
+questionário `sac init`.
+
+#### Scenario: Template gerado com valores do questionário
+- **GIVEN** valores fornecidos pelo usuário: nome="minha-esteira", leader="lead",
+  workers=["dev-1","auditor"], loop="dev-review"
+- **WHEN** `sac init` gera o arquivo
+- **THEN** o TOML contém `[session] name = "minha-esteira"`
+- **AND** `[[agents]]` para cada worker com os campos fornecidos
+- **AND** `[[loops]]` com o loop declarado
+- **AND** o TOML é válido (parseável por `load_config`)
+
+#### Scenario: Template sem loops
+- **GIVEN** usuário não declara loops
+- **WHEN** `sac init` gera o arquivo
+- **THEN** o TOML não contém seção `[[loops]]`
+
