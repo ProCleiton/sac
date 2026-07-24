@@ -1,13 +1,13 @@
-## MODIFIED Requirements
+## ADDED Requirements
 
-### Requirement: Layout por janela com sidebar (progresso)
+### Requirement: Progresso na criação de janelas (boot)
 O sistema SHALL exibir progresso durante a criação da sessão tmux.
 
 #### Scenario: Criação de janela com progresso
 - **WHEN** `sac up` cria janelas e sidebars
 - **THEN** imprime `[N/total] nome: criando janela...` antes de cada comando tmux
 
-### Requirement: Janela dash (progresso)
+### Requirement: Progresso na criação da dash
 A criação da dash SHALL exibir progresso.
 
 #### Scenario: Criação da dash com progresso
