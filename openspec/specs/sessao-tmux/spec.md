@@ -1,7 +1,7 @@
 # Sessão Tmux
 
 ## Purpose
-Gerenciamento da sessão tmux multi-agente: layout de janelas e panes, injeção de prompts, environment variables, socket dedicado e comandos tmux. O layout segue o padrão CCB: uma janela por agente com sidebar à esquerda (30 colunas) e harness à direita, mais uma janela dash com log e watcher.
+Gerenciamento da sessão tmux multi-agente: layout de janelas e panes, injeção de prompts, environment variables, socket dedicado, comandos tmux e inicialização do daemon de mensageria. O layout segue o padrão CCB: uma janela por agente com sidebar à esquerda (30 colunas) e harness à direita, mais uma janela dash com log e daemon.
 
 ## Requirements
 ### Requirement: Layout por janela com sidebar
@@ -20,12 +20,24 @@ Cada agente SHALL ter sua própria janela tmux com sidebar informativa e pane do
 - **THEN** o pane da sidebar é redimensionado para 30 colunas via `tmux resize-pane -x 30`
 
 ### Requirement: Janela dash
-O sistema SHALL criar uma janela de monitoramento com log e watcher.
+O sistema SHALL criar uma janela de monitoramento com log e daemon.
 
 #### Scenario: Criação da dash
 - **WHEN** `sac up` é executado
-- **THEN** uma janela `dash` é criada com sidebar + pane `sac log -f` + pane `sac notify`
+- **THEN** uma janela `dash` é criada, dividida em 3 panes: sidebar (esquerda), `sac log -f` (centro) e `sac daemon` (direita)
 - **AND** a aterrissagem inicial é na janela do leader, pane do harness
+
+### Requirement: Daemon lifecycle na dash
+O daemon SHALL ser iniciado automaticamente na janela dash e gerenciado pelo ciclo de vida da sessão.
+
+#### Scenario: Daemon inicia com a sessão
+- **WHEN** `sac up` cria a janela dash
+- **THEN** o comando DASH_NOTIFY_CMD (`["sac", "daemon"]`) é executado em um dos panes
+- **AND** o daemon escreve `.sac/daemon.pid` ao iniciar
+
+#### Scenario: Daemon encerra com a sessão
+- **WHEN** `sac down` encerra a sessão tmux
+- **THEN** o daemon recebe SIGHUP via tmux e encerra, removendo `.sac/daemon.pid`
 
 ### Requirement: Environment variables
 Cada harness SHALL receber a variável `SAC_AGENT=<nome>` para identificar seu papel.
@@ -33,7 +45,7 @@ Cada harness SHALL receber a variável `SAC_AGENT=<nome>` para identificar seu p
 #### Scenario: Injeção de SAC_AGENT
 - **WHEN** o harness de um agente é iniciado
 - **THEN** o comando executa com `env SAC_AGENT=<nome do agente>` prefixado
-- **AND** comandos como `sac next` usam esta variável para determinar a inbox do agente
+- **AND** comandos como `sac done` usam esta variável para determinar o agente corrente
 
 ### Requirement: Socket dedicado
 O tmux SHALL suportar socket Unix dedicado para isolamento e acesso remoto.

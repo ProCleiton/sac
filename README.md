@@ -2,13 +2,11 @@
 
 ![SAC mascot](docs/sac-mascot.png)
 
-A daemonless multi-agent coordinator built on tmux. The "switchboard" is a
-directory (`.sac/`), not a process. Design doc: `docs/2026-07-24-sac-design.md`.
+A lightweight multi-agent coordinator built on tmux. An optional polling daemon
+watches each agent's inbox and **injects tasks directly into the harness pane**
+— no need for agents to periodically check for new messages.
 
-SAC manages AI harnesses (Kimi Code, opencode, or any interactive CLI) in tmux
-windows and lets them exchange messages through the filesystem — no daemon, no
-database, no screen-scraping heuristics. Completion is explicit: agents end
-their replies with a `SAC_DONE` sentinel line and run `sac done <id>`.
+Design doc: `docs/2026-07-24-sac-design.md`.
 
 ## Install
 
@@ -27,8 +25,8 @@ sac status                                  # overview
 sac send leader "implement X"               # task the leader
 sac run dev-review "feature Y"              # kick off a declared loop
 sac recv dev-1                              # read a reply (up to SAC_DONE)
-sac notify --once                           # single re-poke sweep
-sac notify                                  # continuous watcher (Ctrl-C exits)
+sac daemon                                  # run the delivery daemon (auto-started on dash)
+sac notify --once                           # single re-poke sweep (legacy)
 sac log -f                                  # follow log.jsonl
 sac attach                                  # attach to the tmux session
 sac down                                    # stop the session
@@ -36,16 +34,26 @@ sac down                                    # stop the session
 
 ## Concepts
 
-- **No daemon**: state is `.sac/` (inbox/claimed/done + log.jsonl) plus the tmux
-  session. Crash of SAC takes nothing down; `sac up` is idempotent.
-- **Explicit completion contract**: agents finish replies with `SAC_DONE` and run
-  `sac done <id>` — no fragile turn-detection heuristics.
-- **Reply-to-sender**: upon completing a task, auxiliaries send the result back to
-  the original sender via `sac send <sender> "<result>"` before writing `SAC_DONE`
-  and running `sac done <id>`.
+- **Daemon coordinator**: a lightweight polling daemon (`sac daemon`) monitors
+  every agent's inbox (POLL_INTERVAL=1s). When a new message arrives, it injects
+  the **body directly** into the agent's tmux pane via `send-keys` — no
+  intermediate "run `sac next`" prompt. The daemon also re-pokes stale claimed
+  tasks and writes `daemon.pid` for inter-process coordination.
+- **Explicit completion contract**: agents still signal completion by writing
+  `SAC_DONE` and running `sac done <id>` — the daemon does **not** attempt
+  turn-detection heuristics (avoids false positives).
+- **No dependency on the daemon**: if the daemon is down, `sac send` falls back
+  to the legacy poke ("SAC: mensagem nova — rode `sac next`"). Messages are
+  never lost — the filesystem inbox persists independently.
+- **Filesystem state**: everything lives in `.sac/` (inbox/claimed/done +
+  log.jsonl) plus the tmux session. Crash of SAC or the daemon takes nothing
+  down; `sac up` is idempotent.
 - **Configuration**: `sac.toml` declares exactly one leader, the auxiliaries and
   named loops. Loops are not enforced — the workflow lives in each agent's
   contract prompt (`prompts/`).
+- **Reply-to-sender**: upon completing a task, auxiliaries send the result back to
+  the original sender via `sac send <sender> "<result>"` before writing `SAC_DONE`
+  and running `sac done <id>`.
 
 ## Credits
 

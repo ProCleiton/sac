@@ -31,7 +31,7 @@ class Config:
     session_name: str
     notify_interval: int = 30
     poke_stale_after: int = 120
-    boot_wait: int = 12
+    boot_wait: int = 3
     socket: str | None = None
     agents: list[AgentConfig] = field(default_factory=list)
     loops: list[LoopConfig] = field(default_factory=list)
@@ -93,7 +93,7 @@ def load_config(path: Path) -> Config:
         session_name=session.get("name", "sac"),
         notify_interval=int(session.get("notify_interval", 30)),
         poke_stale_after=int(session.get("poke_stale_after", 120)),
-        boot_wait=int(session.get("boot_wait", 12)),
+        boot_wait=int(session.get("boot_wait", 3)),
         socket=(str(Path(session["socket"]).expanduser()) if session.get("socket") else None),
         agents=agents,
         loops=loops,

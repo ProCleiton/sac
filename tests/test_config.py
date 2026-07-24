@@ -42,7 +42,7 @@ class LoadConfigTest(unittest.TestCase):
         self.assertEqual(cfg.session_name, "sac-test")
         self.assertEqual(cfg.notify_interval, 30)
         self.assertEqual(cfg.poke_stale_after, 120)
-        self.assertEqual(cfg.boot_wait, 12)
+        self.assertEqual(cfg.boot_wait, 3)
         self.assertEqual(len(cfg.agents), 2)
         self.assertEqual(cfg.leader.name, "leader")
         self.assertEqual(cfg.agent("dev-1").command, "opencode")
@@ -53,7 +53,7 @@ class LoadConfigTest(unittest.TestCase):
         cfg = self._load(VALID.replace("notify_interval = 30\n", "").replace("poke_stale_after = 120\n", ""))
         self.assertEqual(cfg.notify_interval, 30)
         self.assertEqual(cfg.poke_stale_after, 120)
-        self.assertEqual(cfg.boot_wait, 12)
+        self.assertEqual(cfg.boot_wait, 3)
 
     def test_boot_wait_custom(self):
         cfg = self._load(VALID.replace("name = \"sac-test\"", "name = \"sac-test\"\nboot_wait = 3"))

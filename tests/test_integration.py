@@ -60,8 +60,8 @@ class IntegrationTest(unittest.TestCase):
                                capture_output=True, text=True).stdout
         lines = [l.strip() for l in panes.splitlines() if l.strip()]
         self.assertGreaterEqual(len(lines), 2, f"dash deve ter 2+ panes, veio: {lines}")
-        self.assertTrue(any("sac log -f" in l for l in lines),
-                        f"deve conter 'sac log -f', veio: {lines}")
+        self.assertTrue(any("sac daemon" in l for l in lines),
+                        f"deve conter 'sac daemon', veio: {lines}")
         # select-pane por id não falha
         pane_ids = subprocess.run(["tmux", "list-panes", "-t", "sac-itest:dash",
                                    "-F", "#{pane_id}"],
@@ -87,9 +87,15 @@ class IntegrationTest(unittest.TestCase):
                 dev1_pid = line.split("|")[0]
                 break
         self.assertNotEqual(dev1_pid, "", "deve encontrar pane do dev-1")
-        pane = subprocess.run(["tmux", "capture-pane", "-p", "-t", dev1_pid],
-                              capture_output=True, text=True).stdout
-        self.assertIn("sac next", pane, f"poke 'sac next' deve estar visível no pane, veio: {pane[-200:]}")
+        pane = ""
+        for _ in range(5):
+            pane = subprocess.run(["tmux", "capture-pane", "-p", "-t", dev1_pid],
+                                  capture_output=True, text=True).stdout
+            if "sac next" in pane:
+                break
+            time.sleep(0.5)
+        self.assertIn("sac next", pane,
+                      f"fallback poke deve aparecer no pane, veio: {pane[-300:]}")
         # Attach cai no leader: última janela ativa é a do leader
         active = subprocess.run(["tmux", "display-message", "-p", "-t", "sac-itest",
                                  "#{window_name}"],
