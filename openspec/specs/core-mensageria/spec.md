@@ -68,7 +68,7 @@ As respostas dos agentes SHALL ser delimitadas por uma sentinela explícita para
 - **THEN** o sistema retorna os últimos 500 caracteres e exit 1, indicando processamento em andamento
 
 ### Requirement: Daemon de entrega direta
-Um daemon opcional SHALL monitorar inbox/claimed de todos os agentes e entregar mensagens diretamente no pane do harness.
+Um daemon opcional SHALL monitorar inbox/claimed de todos os agentes e entregar mensagens diretamente no pane do harness, com suporte a fura-fila (replies entregues mesmo durante tarefa claimed) e backoff exponencial de re-cutucadas.
 
 #### Scenario: Daemon entrega mensagem nova
 - **GIVEN** daemon ativo (PID file em `.sac/daemon.pid`)
@@ -76,6 +76,12 @@ Um daemon opcional SHALL monitorar inbox/claimed de todos os agentes e entregar 
 - **THEN** o daemon injeta o corpo da mensagem no pane do agente via `tmux send-keys -t <pane_id> -l -- <body>` + Enter
 - **AND** o evento `deliver` é registrado em `log.jsonl`
 - **AND** nenhum poke manual é enviado pelo `sac send`
+
+#### Scenario: Daemon entrega reply com fura-fila
+- **GIVEN** o agente tem uma tarefa claimed em andamento
+- **WHEN** uma mensagem com `reply_to` chega na inbox do agente
+- **THEN** o daemon entrega a resposta imediatamente (usa peek + next para não consumir tarefas)
+- **AND** a resposta é movida direto para done (deliver_reply) — sem exigir `sac done`
 
 #### Scenario: Daemon re-cutuca stale
 - **GIVEN** uma mensagem em `claimed/<agente>/` há mais de `poke_stale_after` segundos
@@ -93,8 +99,8 @@ Um daemon opcional SHALL monitorar inbox/claimed de todos os agentes e entregar 
 - **THEN** escreve `daemon.pid` em `.sac/` com o PID do processo
 - **AND** ao receber SIGTERM/SIGINT, remove o arquivo
 
-### Requirement: Stale detection (re-poke)
-Mensagens esquecidas (claimed sem `sac done` há mais de `poke_stale_after` segundos) SHALL ser detectadas para re-cutucada do agente.
+### Requirement: Stale detection (re-poke) com backoff
+Mensagens esquecidas (claimed sem `sac done` há mais de `poke_stale_after` segundos) SHALL ser detectadas para re-cutucada do agente, com backoff exponencial por mensagem (base `poke_stale_after`, teto 5 min).
 
 #### Scenario: Identificação de mensagens stale (daemon)
 - **GIVEN** daemon ativo
@@ -107,6 +113,12 @@ Mensagens esquecidas (claimed sem `sac done` há mais de `poke_stale_after` segu
 - **THEN** mensagens com idade > `poke_stale_after` segundos são identificadas
 - **AND** o agente é re-cutucado com notificação genérica
 - **AND** o evento `poke` é registrado em `log.jsonl`
+
+#### Scenario: Backoff entre pokes da mesma mensagem
+- **GIVEN** a mensagem X foi pokada há N segundos
+- **WHEN** `notify_sweep` tenta pokear X novamente
+- **THEN** o intervalo entre pokes dobra a cada envio (base 120s, teto 600s)
+- **AND** o estado de backoff é mantido em memória (dict compartilhado entre daemon e legado)
 
 ### Requirement: Reply-to-sender
 Respostas de agentes SHALL ser enviadas de volta ao remetente original da mensagem.

@@ -18,10 +18,10 @@ O sistema SHALL ler parâmetros da sessão tmux a partir de `[session]` no `sac.
 - **THEN** os defaults são aplicados: `notify_interval=30`, `poke_stale_after=120`, `boot_wait=12`, `socket=None`
 
 ### Requirement: Declaração de agentes
-O sistema SHALL aceitar múltiplos agentes declarados em `[[agents]]`, com papéis `leader` e `aux`.
+O sistema SHALL aceitar múltiplos agentes declarados em `[[agents]]`, com papéis `leader` e `aux`, e suporte a `boot_wait` opcional por agente.
 
 #### Scenario: Agente completo
-- **GIVEN** `[[agents]]` com `name`, `command`, `args[]`, `role` e `prompt_file`
+- **GIVEN** `[[agents]]` com `name`, `command`, `args[]`, `role`, `prompt_file` e `boot_wait`
 - **WHEN** o arquivo é carregado
 - **THEN** o agente é configurado com todos os campos
 
@@ -29,6 +29,11 @@ O sistema SHALL aceitar múltiplos agentes declarados em `[[agents]]`, com papé
 - **GIVEN** `[[agents]]` sem `prompt_file`
 - **WHEN** o arquivo é carregado
 - **THEN** `prompt_file` é `None` e o agente não recebe injeção automática de prompt
+
+#### Scenario: Agente sem boot_wait (usa global)
+- **GIVEN** `[[agents]]` sem `boot_wait`
+- **WHEN** o arquivo é carregado
+- **THEN** o agente usa o valor global `[session].boot_wait` como default
 
 #### Scenario: Nomes duplicados
 - **GIVEN** `[[agents]]` com dois agentes de mesmo `name`

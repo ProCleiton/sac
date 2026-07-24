@@ -26,7 +26,7 @@ O sistema SHALL expor comandos para criar, inspecionar e destruir a sessão tmux
 - **THEN** o sistema executa `tmux attach -t <session>` (com socket se configurado), substituindo o processo atual
 
 ### Requirement: Envio e consumo de mensagens
-O sistema SHALL permitir comunicação assíncrona entre agentes via mensageria filesystem, com suporte a daemon de entrega direta.
+O sistema SHALL permitir comunicação assíncrona entre agentes via mensageria filesystem, com suporte a daemon de entrega direta e auto-ack de respostas (reply_to).
 
 #### Scenario: send — enviar mensagem (daemon ativo)
 - **WHEN** `sac send <agente> "<corpo>"` é executado e o daemon está ativo (daemon.pid existe)
@@ -38,9 +38,29 @@ O sistema SHALL permitir comunicação assíncrona entre agentes via mensageria 
 - **THEN** o sistema cria a mensagem em `inbox/<agente>/`, registra o evento no log, e cutuca o pane com `"SAC: mensagem nova na inbox — rode \`sac next\`"`
 - **AND** se o pane do agente não existe, exibe aviso no stderr (mensagem ainda está na inbox)
 
-#### Scenario: next — consumir mensagem
-- **WHEN** `sac next` é executado dentro do ambiente do agente (SAC_AGENT definido)
-- **THEN** a mensagem mais antiga da inbox do agente é movida para claimed e exibida
+#### Scenario: send — enviar resposta com reply_to inferido
+- **WHEN** o sender tem exatamente 1 tarefa claimed cujo remetente original é o destinatário
+- **AND** `sac send <agente> "<corpo>"` é executado
+- **THEN** a mensagem é marcada com `reply_to=<id_da_tarefa>` no cabeçalho
+- **AND** o daemon entrega a resposta mesmo com tarefa claimed em andamento (fura-fila)
+
+#### Scenario: next — consumir mensagem (com auto-ack de reply)
+- **WHEN** `sac next` é executado e a mensagem lida possui `reply_to`
+- **THEN** a mensagem é movida diretamente para done (via `store.finish_reply()` ou `store.ack()`)
+- **AND** o agente NÃO precisa executar `sac done`
+- **AND** NENHUM stale poke será disparado para esta mensagem
+
+#### Scenario: next — consumir mensagem (tarefa sem reply)
+- **WHEN** `sac next` é executado e a mensagem NÃO possui `reply_to`
+- **AND** o daemon está inativo
+- **THEN** a mensagem é movida para claimed (comportamento legado)
+- **AND** o agente DEVE executar `sac done <id>` para concluir
+
+#### Scenario: next — consumir mensagem (tarefa com daemon ativo)
+- **WHEN** `sac next` é executado e a mensagem NÃO possui `reply_to`
+- **AND** o daemon está ativo
+- **THEN** a mensagem é movida para done (o daemon entrega tarefas reais direto)
+- **AND** o agente NÃO precisa executar `sac done`
 - **AND** retorna 2 se `SAC_AGENT` não está definido
 
 #### Scenario: done — concluir mensagem
@@ -82,12 +102,18 @@ O sistema SHALL oferecer compatibilidade com o modelo notify original para opera
 - **AND** o loop continua
 
 ### Requirement: Resiliência em cmd_log -f
-O sistema SHALL expor o log de eventos para acompanhamento em tempo real, com captura de exceções de leitura para evitar morte do pane.
+O sistema SHALL expor o log de eventos para acompanhamento em tempo real, com captura de exceções de leitura para evitar morte do pane, e aguardar o arquivo de log aparecer no boot.
 
 #### Scenario: log — exibir log
 - **WHEN** `sac log` é executado
 - **THEN** o conteúdo de `.sac/log.jsonl` é exibido
 - **AND** `sac log -f` segue o arquivo em tempo real (tail -f)
+
+#### Scenario: log -f aguarda arquivo no boot
+- **GIVEN** `.sac/log.jsonl` não existe (sessão nova)
+- **WHEN** `sac log -f` é executado
+- **THEN** o comando espera o arquivo em loop (sleep 0.5s) até o 1º evento de log ser escrito
+- **AND** quando o arquivo aparece, segue normalmente
 
 #### Scenario: Log -f com erro de leitura
 - **WHEN** `sac log -f` encontra erro de I/O no arquivo de log
@@ -101,17 +127,50 @@ O sistema SHALL permitir re-injetar o prompt de contrato em agentes específicos
 - **WHEN** `sac inject <agente>` é executado
 - **THEN** o `prompt_file` do agente (se configurado) é re-injetado no pane via paste + Enter
 
-### Requirement: Flag --clean em status
-O sistema SHALL aceitar `sac status --clean` para gatilhar limpeza de mensagens órfãs.
+### Requirement: Flag --clean em status (com dry-run)
+O sistema SHALL aceitar `sac status --clean` como dry-run (lista órfãos sem remover), exigindo `--yes` para executar a remoção.
 
-#### Scenario: status --clean
+#### Scenario: status --clean dry-run
 - **WHEN** `sac status --clean` é executado
-- **THEN** o sistema executa a limpeza de órfãos (ver core-mensageria)
-- **AND** exibe o resultado da limpeza junto com o status normal
+- **THEN** o sistema identifica agentes órfãos e exibe a lista com contagem de mensagens sem remover nada
+- **AND** registra o evento `clean` no log como dry-run (dry_run=true)
+
+#### Scenario: status --clean --yes executa remoção
+- **WHEN** `sac status --clean --yes` é executado
+- **THEN** os diretórios inbox/claimed órfãos são removidos
+- **AND** diretórios done são preservados
+- **AND** o evento `clean` é registrado com dry_run=false
 
 #### Scenario: status sem --clean
 - **WHEN** `sac status` é executado sem `--clean`
 - **THEN** o sistema exibe o status normal sem efetuar limpeza (comportamento inalterado)
+
+### Requirement: Re-check pré-poke no notify_sweep
+O sweep `notify_sweep` SHALL re-verificar stale IDs contra claimed antes de enviar cada poke, evitando pokes obsoletos.
+
+#### Scenario: Re-check evita poke falso
+- **GIVEN** `stale()` retorna X para agente A
+- **AND** X foi done() entre a detecção e o envio
+- **WHEN** `notify_sweep` vai pokear A
+- **THEN** re-consulta `claimed(A)` e X não está mais lá
+- **AND** poke não é enviado
+
+### Requirement: Backoff de poke no notify_sweep
+O sweep `notify_sweep` SHALL aplicar backoff exponencial por mensagem, com teto de 5 min, tanto no daemon quanto no legado.
+
+#### Scenario: Backoff no legado
+- **GIVEN** `cmd_notify` ativo (legado)
+- **WHEN** `notify_sweep` poka a mesma mensagem X repetidamente
+- **THEN** o intervalo entre pokes dobra a cada envio (base `poke_stale_after`, teto 300s)
+
+### Requirement: Send para user sem validação de agente
+O comando `sac send` SHALL aceitar "user" como destinatário sem validar contra o config, persistindo em `inbox/user/`.
+
+#### Scenario: send para user aceito
+- **WHEN** `sac send user "mensagem"` é executado
+- **THEN** a mensagem é criada em `inbox/user/` (sem erro de ConfigError)
+- **AND** a saída padrão exibe o id da mensagem
+- **AND** nenhum poke ou deliver é tentado
 
 ### Requirement: Sidebar informativa
 O sistema SHALL exibir um painel lateral com o estado atual dos agentes.
