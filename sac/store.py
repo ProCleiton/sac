@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -76,6 +77,31 @@ class Store:
 
     def claimed(self, agent: str) -> list[str]:
         return self._ids("claimed", agent)
+
+    def clean_orphans(self, valid_agents: list[str]) -> dict[str, int]:
+        valid = set(valid_agents)
+        inbox_files = 0
+        claimed_files = 0
+        removed_agents = []
+        for kind in ("inbox", "claimed"):
+            d = self.root / kind
+            if not d.is_dir():
+                continue
+            for agent_dir in d.iterdir():
+                if not agent_dir.is_dir():
+                    continue
+                if agent_dir.name in valid:
+                    continue
+                files = len(list(agent_dir.glob("*.msg")))
+                shutil.rmtree(agent_dir)
+                if kind == "inbox":
+                    inbox_files += files
+                    removed_agents.append(agent_dir.name)
+                else:
+                    claimed_files += files
+        self.log("clean", agents_removed=list(set(removed_agents)),
+                 inbox_files=inbox_files, claimed_files=claimed_files)
+        return {"inbox_files": inbox_files, "claimed_files": claimed_files, "agents_removed": removed_agents}
 
     def stale(self, agent: str, seconds: int, now: datetime | None = None) -> list[str]:
         now = now or datetime.now()

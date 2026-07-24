@@ -119,5 +119,21 @@ class Tmux:
     def capture_pane(self, target: str, lines: int = 200) -> str:
         return self._run("capture-pane", "-p", "-t", self._ptarget(target), "-S", f"-{lines}").stdout
 
+    def kill_pane(self, target: str) -> None:
+        self._run("kill-pane", "-t", self._ptarget(target))
+
+    def find_pane_by_command(self, substring: str, window: str | None = None) -> str | None:
+        if window:
+            out = self._run("list-panes", "-t", f"{self.session}:{window}", "-F",
+                             "#{pane_id}|#{pane_start_command}").stdout
+        else:
+            out = self._run("list-panes", "-s", "-t", self.session, "-F",
+                             "#{pane_id}|#{pane_start_command}").stdout
+        for line in out.splitlines():
+            pid, cmd = line.split("|", 1)
+            if substring in cmd:
+                return pid
+        return None
+
     def kill_session(self) -> None:
         self._run("kill-session", "-t", self.session)

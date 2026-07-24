@@ -7,8 +7,8 @@ import sys
 from pathlib import Path
 
 from .commands import (
-    cmd_done, cmd_down, cmd_inject, cmd_log, cmd_next, cmd_notify,
-    cmd_recv, cmd_run, cmd_send, cmd_sidebar, cmd_status, cmd_up,
+    cmd_done, cmd_down, cmd_inject, cmd_kill, cmd_log, cmd_next,
+    cmd_notify, cmd_recv, cmd_run, cmd_send, cmd_sidebar, cmd_status, cmd_up,
 )
 from .config import ConfigError, load_config
 from .daemon import run_daemon
@@ -23,7 +23,8 @@ def _build_parser() -> argparse.ArgumentParser:
 
     sub.add_parser("up", help="sobe a sessão tmux com os agentes")
     sub.add_parser("down", help="encerra a sessão (preserva .sac/)")
-    sub.add_parser("status", help="visão geral dos agentes e filas")
+    sp = sub.add_parser("status", help="visão geral dos agentes e filas")
+    sp.add_argument("--clean", action="store_true", help="remove mensagens órfãs de agentes removidos do config")
     sub.add_parser("attach", help="atacha à sessão tmux")
     sub.add_parser("next", help="puxa a próxima mensagem da sua inbox (agente)")
 
@@ -54,6 +55,9 @@ def _build_parser() -> argparse.ArgumentParser:
     sp.add_argument("loop")
     sp.add_argument("task")
 
+    sp = sub.add_parser("kill", help="mata e recria o harness de um agente")
+    sp.add_argument("agent")
+
     sub.add_parser("daemon", help="daemon de mensageria (uso interno, sobe no dashboard)")
     return p
 
@@ -80,7 +84,7 @@ def main(argv: list[str] | None = None) -> int:
             case "down":
                 return cmd_down(cfg, tmux)
             case "status":
-                return cmd_status(cfg, store, tmux)
+                return cmd_status(cfg, store, tmux, clean=args.clean)
             case "sidebar":
                 return cmd_sidebar(cfg, store, tmux)
             case "attach":
@@ -106,6 +110,8 @@ def main(argv: list[str] | None = None) -> int:
             case "run":
                 cmd_run(cfg, store, tmux, args.loop, args.task)
                 return 0
+            case "kill":
+                return cmd_kill(cfg, store, tmux, root, args.agent)
             case "daemon":
                 return run_daemon(cfg, store, tmux)
     except (ConfigError, StoreError) as e:

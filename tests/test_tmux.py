@@ -15,7 +15,10 @@ class FakeRunner:
     def __call__(self, *args):
         self.calls.append(args)
         key = args[1] if len(args) > 1 else ""
+        sub_key = f"{key}|{args[2]}" if len(args) > 2 and key == "list-panes" else None
         out = self.outputs.get(key, "")
+        if sub_key and not out:
+            out = self.outputs.get(sub_key, "")
         if not out and "#{pane_id}" in str(args):
             self._seq += 1
             out = f"%{self._seq}"
@@ -216,16 +219,37 @@ class TmuxSplitTest(unittest.TestCase):
         t.set_pane_title("%1", "dev-1")
         self.assertEqual(r.calls[0], ("tmux", "select-pane", "-t", "%1", "-T", "dev-1"))
 
-    def test_find_pane_id_by_start_command(self):
+    def test_kill_pane(self):
+        r = FakeRunner()
+        t = Tmux("sac", runner=r)
+        t.kill_pane("%2")
+        self.assertEqual(r.calls[0], ("tmux", "kill-pane", "-t", "%2"))
+
+    def test_kill_pane_unknown(self):
+        r = FakeRunner(rc=1)
+        t = Tmux("sac", runner=r)
+        t.kill_pane("fantasma")
+        self.assertEqual(r.calls[0], ("tmux", "kill-pane", "-t", "sac:fantasma"))
+
+    def test_find_pane_by_command(self):
         r = FakeRunner(outputs={
-            "list-panes": "%1|env SAC_AGENT=leader kimi --model k3\n%2|env SAC_AGENT=dev-1 opencode -m x/y\n%3|sac log -f\n"
+            "list-panes|-s": "%1|env SAC_AGENT=leader kimi\n%2|sac sidebar\n%3|env SAC_AGENT=dev-1 opencode\n%4|sac sidebar\n",
         })
         t = Tmux("sac", runner=r)
-        self.assertEqual(t.find_pane_id("leader"), "%1")
-        self.assertEqual(t.find_pane_id("dev-1"), "%2")
-        self.assertIsNone(t.find_pane_id("fantasma"))
+        self.assertEqual(t.find_pane_by_command("sac sidebar"), "%2",
+                         "sem window, retorna primeiro da sessao")
 
-    def test_has_pane_by_start_command(self):
+    def test_find_pane_by_command_window_scoped(self):
+        r = FakeRunner(outputs={
+            "list-panes|-t": "%4|sac sidebar\n",
+        })
+        t = Tmux("sac", runner=r)
+        self.assertEqual(t.find_pane_by_command("sac sidebar", window="dev-1"), "%4")
+        call = r.calls[0]
+        self.assertIn("-t", call, "deve usar -t (target window)")
+        self.assertIn("sac:dev-1", call, "deve mirar janela dev-1")
+
+    def test_find_pane_id_by_start_command(self):
         r = FakeRunner(outputs={
             "list-panes": "%1|env SAC_AGENT=leader kimi\n%2|env SAC_AGENT=dev-1 opencode\n"
         })

@@ -86,6 +86,41 @@ def extract_reply(pane_text: str) -> tuple[bool, str]:
     return True, pane_text[:idx].rstrip("\n")
 
 
+def cmd_kill(cfg: Config, store: Store, tmux: Tmux, project_root: Path | None,
+             agent_name: str, boot_wait: float | None = None) -> int:
+    cfg.agent(agent_name)
+    if not tmux.has_session():
+        print("erro: nenhuma sessão ativa", file=sys.stderr)
+        return 1
+    pid = tmux.find_pane_id(agent_name)
+    if not pid:
+        print(f"erro: pane do agente '{agent_name}' não encontrado", file=sys.stderr)
+        return 1
+    sidebar_id = tmux.find_pane_by_command("sac sidebar", window=agent_name)
+    if not sidebar_id:
+        print(f"erro: sidebar não encontrada na janela do agente '{agent_name}'", file=sys.stderr)
+        return 1
+    tmux.kill_pane(pid)
+    agent = cfg.agent(agent_name)
+    harness_id = tmux.split_window(sidebar_id, [agent.command, *agent.args],
+                                    env={"SAC_AGENT": agent.name})
+    tmux.resize_pane(sidebar_id, SIDEBAR_WIDTH)
+    tmux.set_pane_title(harness_id, agent.name)
+    _boot = boot_wait if boot_wait is not None else cfg.boot_wait
+    if _boot > 0:
+        time.sleep(_boot)
+    if project_root:
+        _inject_prompt(tmux, agent, project_root, pane_id=harness_id)
+    claimed = store.claimed(agent_name)
+    if claimed:
+        time.sleep(0.5)
+        tmux.paste(harness_id, f"SAC: tarefa {claimed[0]} pendente — rode `sac done {claimed[0]}`")
+        tmux.press_enter(harness_id)
+    store.log("kill", agent=agent_name)
+    print(f"ok: harness do '{agent_name}' reiniciado")
+    return 0
+
+
 SIDEBAR_CMD = ["sh", "-c", "while true; do clear; sac sidebar; sleep 5; done"]
 SIDEBAR_WIDTH = 30
 DASH_LOG_CMD = ["sac", "log", "-f"]
@@ -173,6 +208,10 @@ def cmd_up(cfg: Config, store: Store, tmux: Tmux, project_root: Path,
         pid = harness_ids.get(agent.name)
         if pid:
             _inject_prompt(tmux, agent, project_root, pane_id=pid)
+    agent_names = " ".join(a.name for a in cfg.agents)
+    hook_cmd = (f"run-shell 'for w in {agent_names}; do "
+                f"tmux resize-pane -t {tmux.session}:$w.0 -x {SIDEBAR_WIDTH} 2>/dev/null; done'")
+    tmux._run("set-hook", "-t", tmux.session, "client-resized", hook_cmd)
     print(f"sessão '{tmux.session}' no ar com {len(cfg.agents)} agentes + dashboard")
     if sys.stdin.isatty():
         _cmd = ["tmux"]
@@ -218,7 +257,12 @@ def cmd_down(cfg: Config, tmux: Tmux) -> int:
     return 0
 
 
-def cmd_status(cfg: Config, store: Store, tmux: Tmux) -> int:
+def cmd_status(cfg: Config, store: Store, tmux: Tmux, clean: bool = False) -> int:
+    if clean:
+        names = [a.name for a in cfg.agents]
+        stats = store.clean_orphans(names)
+        print(f"limpeza: {stats['inbox_files']} inbox, {stats['claimed_files']} claimed removidos "
+              f"({len(stats['agents_removed'])} agentes)")
     up = tmux.has_session()
     print(f"sessão '{tmux.session}': {'ativa' if up else 'inativa'}")
     for a in cfg.agents:
@@ -259,12 +303,18 @@ def notify_sweep(cfg: Config, store: Store, tmux: Tmux) -> dict[str, int]:
 
 def cmd_notify(cfg: Config, store: Store, tmux: Tmux, once: bool = False) -> int:
     if once:
-        notify_sweep(cfg, store, tmux)
+        try:
+            notify_sweep(cfg, store, tmux)
+        except Exception as exc:
+            store.log("loop_error", error=str(exc))
         return 0
     print(f"notify ativo (intervalo {cfg.notify_interval}s, stale após {cfg.poke_stale_after}s) — Ctrl-C para sair")
     try:
         while True:
-            notify_sweep(cfg, store, tmux)
+            try:
+                notify_sweep(cfg, store, tmux)
+            except Exception as exc:
+                store.log("loop_error", error=str(exc))
             time.sleep(cfg.notify_interval)
     except KeyboardInterrupt:
         return 0
@@ -284,7 +334,12 @@ def cmd_log(store: Store, follow: bool = False) -> int:
         return 0
     with path.open(encoding="utf-8") as f:
         while True:
-            line = f.readline()
+            try:
+                line = f.readline()
+            except OSError as exc:
+                store.log("loop_error", error=str(exc))
+                time.sleep(1)
+                continue
             if line:
                 print(line, end="")
             elif follow:
