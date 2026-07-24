@@ -120,9 +120,9 @@ class UpDownStatusTest(unittest.TestCase):
         self.assertIn("leader", str(self.runner.calls[sw_idx]))
         sp_land = next(i for i, c in enumerate(self.runner.calls) if c[1] == "select-pane" and "-T" not in c)
         self.assertIn("%", str(self.runner.calls[sp_land]))
-        # paste + enter para ambos agentes
+        # paste para prompts de ambos agentes
         paste_calls = [c for c in self.runner.calls if c[1] == "paste-buffer"]
-        self.assertEqual(len(paste_calls), 2)
+        self.assertEqual(len(paste_calls), 2, "deve usar paste para prompts dos 2 agentes")
         enter_calls = [c for c in self.runner.calls if c[1] == "send-keys" and c[-1] == "Enter"]
         self.assertEqual(len(enter_calls), 2)
 
@@ -166,7 +166,9 @@ class InjectTest(unittest.TestCase):
         rc = cmd_inject(self.cfg, self.tmux, self.root, "leader")
         self.assertEqual(rc, 0)
         paste_calls = [c for c in self.runner.calls if c[1] == "paste-buffer"]
-        self.assertEqual(len(paste_calls), 1)
+        self.assertEqual(len(paste_calls), 1, "deve usar paste para prompt")
+        enter_calls = [c for c in self.runner.calls if c[1] == "send-keys" and c[-1] == "Enter"]
+        self.assertEqual(len(enter_calls), 1)
 
     def test_inject_unknown_agent_returns_1(self):
         rc = cmd_inject(self.cfg, self.tmux, self.root, "fantasma")

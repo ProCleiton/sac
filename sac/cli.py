@@ -11,6 +11,7 @@ from .commands import (
     cmd_recv, cmd_run, cmd_send, cmd_sidebar, cmd_status, cmd_up,
 )
 from .config import ConfigError, load_config
+from .daemon import run_daemon
 from .store import Store, StoreError
 from .tmux import Tmux
 
@@ -52,6 +53,8 @@ def _build_parser() -> argparse.ArgumentParser:
     sp = sub.add_parser("run", help="dá o pontapé em um loop declarado")
     sp.add_argument("loop")
     sp.add_argument("task")
+
+    sub.add_parser("daemon", help="daemon de mensageria (uso interno, sobe no dashboard)")
     return p
 
 
@@ -103,6 +106,8 @@ def main(argv: list[str] | None = None) -> int:
             case "run":
                 cmd_run(cfg, store, tmux, args.loop, args.task)
                 return 0
+            case "daemon":
+                return run_daemon(cfg, store, tmux)
     except (ConfigError, StoreError) as e:
         print(f"erro: {e}", file=sys.stderr)
         return 1

@@ -1,7 +1,9 @@
 # Core Mensageria
 
 ## Purpose
-Sistema de mensageria baseado em filesystem para coordenação multi-agente. A "central" é o diretório `.sac/` com subdiretórios `inbox/<agente>/`, `claimed/<agente>/`, `done/<agente>/` e o arquivo `log.jsonl`. Agentes comunicam-se escrevendo/consumindo arquivos `.msg` — sem daemon, banco ou fila em memória. O contrato de conclusão é explícito: sentinela `SAC_DONE` + comando `sac done`.
+Sistema de mensageria baseado em filesystem para coordenação multi-agente. A "central" é o diretório `.sac/` com subdiretórios `inbox/<agente>/`, `claimed/<agente>/`, `done/<agente>/` e o arquivo `log.jsonl`. Agentes comunicam-se escrevendo/consumindo arquivos `.msg`.
+
+Um daemon opcional (classe `Daemon`) monitora inbox/claimed de cada agente a cada 1s e injeta o corpo da mensagem diretamente no pane do harness via `tmux send-keys -l` — sem necessidade de `sac next` manual.
 
 ## Requirements
 ### Requirement: Armazenamento persistente de mensagens
@@ -11,6 +13,8 @@ O sistema SHALL armazenar mensagens como arquivos individuais no filesystem, sem
 - **WHEN** uma mensagem é enviada via `sac send <agente> "<corpo>"`
 - **THEN** um arquivo `<YYYYMMDD>-<HHMMSS>-<NNN>-from-<sender>.msg` é criado em `inbox/<agente>/` com cabeçalho (id, from, to, ts) e corpo
 - **AND** o evento `send` é registrado em `log.jsonl` com timestamp, sender, destinatário e id
+- **AND** se o daemon está ativo (daemon.pid existe), NENHUM poke manual é enviado ao pane
+- **AND** se o daemon não está ativo, o texto `"SAC: mensagem nova na inbox — rode \`sac next\`"` é injetado via send-keys
 
 #### Scenario: Consumo de mensagem (FIFO)
 - **WHEN** um agente executa `sac next`
@@ -43,11 +47,12 @@ O identificador de mensagem SHALL conter timestamp e sequencial para ordenação
 O sistema SHALL manter um log JSONL de todos os eventos de mensageria para auditoria e depuração.
 
 #### Scenario: Eventos registrados
-- **WHEN** mensagens são enviadas, consumidas, concluídas ou agentes são cutucados
+- **WHEN** mensagens são enviadas, consumidas, concluídas, agentes são cutucados ou o daemon entrega/re-cutuca
 - **THEN** cada evento é registrado como uma linha JSON em `.sac/log.jsonl` com timestamp e campos específicos do evento
 - **AND** eventos `send` incluem sender e destinatário
 - **AND** eventos `next` e `done` incluem agent e id
 - **AND** eventos `poke` incluem agent e contagem de mensagens
+- **AND** eventos `deliver` (daemon) incluem agent, id e sender
 
 ### Requirement: Sentinela de conclusão SAC_DONE
 As respostas dos agentes SHALL ser delimitadas por uma sentinela explícita para detecção precisa de fim de processamento.
@@ -62,13 +67,45 @@ As respostas dos agentes SHALL ser delimitadas por uma sentinela explícita para
 - **WHEN** `sac recv <agente>` é executado e a sentinela `SAC_DONE` não está presente
 - **THEN** o sistema retorna os últimos 500 caracteres e exit 1, indicando processamento em andamento
 
-### Requirement: Stale detection (re-poke)
-Mensagens esquecidas (pending ou claimed sem `sac done` há mais de `poke_stale_after` segundos) SHALL ser detectadas para re-cutucada do agente.
+### Requirement: Daemon de entrega direta
+Um daemon opcional SHALL monitorar inbox/claimed de todos os agentes e entregar mensagens diretamente no pane do harness.
 
-#### Scenario: Identificação de mensagens stale
-- **WHEN** `sac notify` varre inbox/claimed de todos agentes
+#### Scenario: Daemon entrega mensagem nova
+- **GIVEN** daemon ativo (PID file em `.sac/daemon.pid`)
+- **WHEN** uma mensagem nova aparece em `inbox/<agente>/`
+- **THEN** o daemon injeta o corpo da mensagem no pane do agente via `tmux send-keys -t <pane_id> -l -- <body>` + Enter
+- **AND** o evento `deliver` é registrado em `log.jsonl`
+- **AND** nenhum poke manual é enviado pelo `sac send`
+
+#### Scenario: Daemon re-cutuca stale
+- **GIVEN** uma mensagem em `claimed/<agente>/` há mais de `poke_stale_after` segundos
+- **WHEN** o daemon varre o agente
+- **THEN** injeta `"SAC: tarefa <id> pendente — rode \`sac done <id>\`"` no pane
+- **AND** respeita `notify_interval` entre re-cutucadas do mesmo agente (anti-flood)
+
+#### Scenario: Daemon não entrega mensagens para agentes sem pane
+- **WHEN** o daemon tenta entregar para um agente cujo pane_id não é encontrado
+- **THEN** a mensagem permanece na inbox (não se perde)
+- **AND** o daemon continua tentando no próximo ciclo de poll
+
+#### Scenario: Daemon escreve PID file
+- **WHEN** o daemon inicia (`Daemon.run()`)
+- **THEN** escreve `daemon.pid` em `.sac/` com o PID do processo
+- **AND** ao receber SIGTERM/SIGINT, remove o arquivo
+
+### Requirement: Stale detection (re-poke)
+Mensagens esquecidas (claimed sem `sac done` há mais de `poke_stale_after` segundos) SHALL ser detectadas para re-cutucada do agente.
+
+#### Scenario: Identificação de mensagens stale (daemon)
+- **GIVEN** daemon ativo
+- **WHEN** mensagem em claimed há mais de `poke_stale_after` segundos
+- **THEN** o daemon re-cutuca o agente com lembrete específico da tarefa
+- **AND** o evento `poke` é registrado em `log.jsonl`
+
+#### Scenario: Identificação de mensagens stale (notify legado)
+- **WHEN** `sac notify` varre inbox/claimed de todos agentes (daemon offline)
 - **THEN** mensagens com idade > `poke_stale_after` segundos são identificadas
-- **AND** o agente é re-cutucado com notificação
+- **AND** o agente é re-cutucado com notificação genérica
 - **AND** o evento `poke` é registrado em `log.jsonl`
 
 ### Requirement: Reply-to-sender

@@ -15,9 +15,26 @@ POKE_TEXT = "SAC: mensagem nova na inbox — rode `sac next`"
 SENTINEL = "SAC_DONE"
 
 
+def _daemon_active(store: Store) -> bool:
+    pid_path = store.root / "daemon.pid"
+    if not pid_path.exists():
+        return False
+    try:
+        pid = int(pid_path.read_text(encoding="utf-8").strip())
+        os.kill(pid, 0)
+        return True
+    except (ValueError, ProcessLookupError):
+        pid_path.unlink(missing_ok=True)
+        return False
+    except PermissionError:
+        return True
+
+
 def cmd_send(cfg: Config, store: Store, tmux: Tmux, to: str, body: str, sender: str = "user") -> str:
     cfg.agent(to)
     mid = store.send(sender, to, body)
+    if _daemon_active(store):
+        return mid
     if tmux.has_session():
         pid = tmux.find_pane_id(to)
         if pid:
@@ -72,7 +89,7 @@ def extract_reply(pane_text: str) -> tuple[bool, str]:
 SIDEBAR_CMD = ["sh", "-c", "while true; do clear; sac sidebar; sleep 5; done"]
 SIDEBAR_WIDTH = 30
 DASH_LOG_CMD = ["sac", "log", "-f"]
-DASH_NOTIFY_CMD = ["sac", "notify"]
+DASH_NOTIFY_CMD = ["sac", "daemon"]
 
 
 def cmd_sidebar(cfg: Config, store: Store, tmux: Tmux) -> int:
@@ -157,6 +174,12 @@ def cmd_up(cfg: Config, store: Store, tmux: Tmux, project_root: Path,
         if pid:
             _inject_prompt(tmux, agent, project_root, pane_id=pid)
     print(f"sessão '{tmux.session}' no ar com {len(cfg.agents)} agentes + dashboard")
+    if sys.stdin.isatty():
+        _cmd = ["tmux"]
+        if cfg.socket:
+            _cmd += ["-S", cfg.socket]
+        _cmd += ["attach", "-t", cfg.session_name]
+        os.execvp("tmux", _cmd)
     return 0
 
 

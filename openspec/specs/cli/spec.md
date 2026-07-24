@@ -1,7 +1,7 @@
 # CLI
 
 ## Purpose
-Interface de linha de comando `sac` com 13 comandos para gerenciamento de sessão multi-agente, mensageria, monitoramento e depuração. Entrypoint via `python -m sac` ou comando `sac` (instalação opcional via `pip install -e .`). Argumento global `--config <path>` para caminho do `sac.toml` (default: `sac.toml` no diretório corrente).
+Interface de linha de comando `sac` com 14 comandos para gerenciamento de sessão multi-agente, mensageria (com suporte a daemon opcional), monitoramento e depuração. Entrypoint via `python -m sac` ou comando `sac` (instalação opcional via `pip install -e .`). Argumento global `--config <path>` para caminho do `sac.toml` (default: `sac.toml` no diretório corrente).
 
 ## Requirements
 ### Requirement: Gerenciamento de sessão tmux
@@ -9,14 +9,14 @@ O sistema SHALL expor comandos para criar, inspecionar e destruir a sessão tmux
 
 #### Scenario: up — iniciar sessão
 - **WHEN** `sac up` é executado com `sac.toml` válido
-- **THEN** o sistema cria a sessão tmux, uma janela por agente com sidebar + harness, janela dash, e aterrissa no leader
+- **THEN** o sistema cria a sessão tmux, uma janela por agente com sidebar + harness, janela dash (com log + daemon), e aterrissa no leader
 - **AND** é idempotente (rejeita se sessão já existe)
 - **AND** agentes com `prompt_file` configurado recebem o prompt injetado após `boot_wait` segundos
 
 #### Scenario: down — encerrar sessão
 - **WHEN** `sac down` é executado
 - **THEN** a sessão tmux é encerrada via `tmux kill-session`
-- **AND** o diretório `.sac/` é preservado
+- **AND** o diretório `.sac/` é preservado (incluindo daemon.pid se existente — o daemon recebe SIGHUP via tmux)
 
 #### Scenario: status — visão geral
 - **WHEN** `sac status` é executado
@@ -27,12 +27,17 @@ O sistema SHALL expor comandos para criar, inspecionar e destruir a sessão tmux
 - **THEN** o sistema executa `tmux attach -t <session>` (com socket se configurado), substituindo o processo atual
 
 ### Requirement: Envio e consumo de mensagens
-O sistema SHALL permitir comunicação assíncrona entre agentes via mensageria filesystem.
+O sistema SHALL permitir comunicação assíncrona entre agentes via mensageria filesystem, com suporte a daemon de entrega direta.
 
-#### Scenario: send — enviar mensagem
-- **WHEN** `sac send <agente> "<corpo>"` é executado
-- **THEN** o sistema cria a mensagem em `inbox/<agente>/`, registra o evento no log e cutuca o pane do agente
+#### Scenario: send — enviar mensagem (daemon ativo)
+- **WHEN** `sac send <agente> "<corpo>"` é executado e o daemon está ativo (daemon.pid existe)
+- **THEN** o sistema cria a mensagem em `inbox/<agente>/`, registra o evento no log, e NÃO cutuca o pane (o daemon fará a entrega direta)
 - **AND** o sender é definido pela variável de ambiente `SAC_AGENT` ou "user" quando executado pelo usuário
+
+#### Scenario: send — enviar mensagem (sem daemon)
+- **WHEN** `sac send <agente> "<corpo>"` é executado e o daemon NÃO está ativo
+- **THEN** o sistema cria a mensagem em `inbox/<agente>/`, registra o evento no log, e cutuca o pane com `"SAC: mensagem nova na inbox — rode \`sac next\`"`
+- **AND** se o pane do agente não existe, exibe aviso no stderr (mensagem ainda está na inbox)
 
 #### Scenario: next — consumir mensagem
 - **WHEN** `sac next` é executado dentro do ambiente do agente (SAC_AGENT definido)
@@ -50,13 +55,22 @@ O sistema SHALL permitir comunicação assíncrona entre agentes via mensageria 
 - **AND** se não encontrada: exibe "ainda processando" + últimos 500 caracteres e retorna 1
 - **AND** o parâmetro `--lines N` permite controlar quantas linhas capturar (default 200)
 
-### Requirement: Notificação e re-cutucada
-O sistema SHALL monitorar mensagens pendentes e re-notificar agentes que não processaram a tempo.
+### Requirement: Daemon de mensageria
+O sistema SHALL expor um comando `daemon` que implementa o polling e entrega direta de mensagens.
 
-#### Scenario: notify — watcher contínuo
+#### Scenario: daemon — iniciar mensageria contínua
+- **WHEN** `sac daemon` é executado
+- **THEN** o sistema inicia o loop Daemon: a cada 1s varre inbox/claimed de todos agentes, entrega mensagens novas diretamente no pane, e re-cutuca mensagens claimed stale
+- **AND** escreve `.sac/daemon.pid` com o PID do processo
+- **AND** encerra limpo com SIGTERM/SIGINT, removendo o PID file
+
+### Requirement: Notificação e re-cutucada (legado)
+O sistema SHALL oferecer compatibilidade com o modelo notify original para operação sem daemon.
+
+#### Scenario: notify — watcher contínuo (legado)
 - **WHEN** `sac notify` é executado sem `--once`
 - **THEN** o sistema entra em loop: a cada `notify_interval` segundos varre inbox/claimed
-- **AND** mensagens mais velhas que `poke_stale_after` segundos provocam re-cutucada do agente
+- **AND** mensagens mais velhas que `poke_stale_after` segundos provocam re-cutucada do agente com texto genérico
 - **AND** o loop termina com Ctrl-C
 
 #### Scenario: notify --once — varredura única
