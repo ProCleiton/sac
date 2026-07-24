@@ -6,10 +6,11 @@ from sac.tmux import Tmux
 
 
 class FakeRunner:
-    def __init__(self, outputs=None, rc=0):
+    def __init__(self, outputs=None, rc=0, stderr=""):
         self.calls = []
         self.outputs = outputs or {}
         self.rc = rc
+        self._stderr = stderr
         self._seq = 0
 
     def __call__(self, *args):
@@ -28,7 +29,8 @@ class FakeRunner:
             out = f"%{self._seq}"
         rc_key = ("rc", sub_key) if sub_key and ("rc", sub_key) in self.outputs else ("rc", key)
         rc = self.outputs.get(rc_key, self.rc)
-        return subprocess.CompletedProcess(args, rc, stdout=out, stderr="")
+        stderr = self.outputs.get(("stderr", key), self._stderr)
+        return subprocess.CompletedProcess(args, rc, stdout=out, stderr=stderr)
 
 
 class TmuxTest(unittest.TestCase):
@@ -160,6 +162,21 @@ class TmuxSocketTest(unittest.TestCase):
         t.send_keys("dev-1", "oi")
         self.assertEqual(r.calls[0][:4], ("tmux", "-S", "/home/dev/.sac/tmux.sock", "has-session"))
         self.assertEqual(r.calls[1][:3], ("tmux", "-S", "/home/dev/.sac/tmux.sock"))
+
+
+class TmuxErrorTest(unittest.TestCase):
+    def test_tmux_check_ok(self):
+        r = FakeRunner(rc=0)
+        t = Tmux("sac", runner=r)
+        t.check("has-session", "-t", "sac")
+
+    def test_tmux_check_fail(self):
+        from sac.tmux import TmuxError
+        r = FakeRunner(rc=1, stderr="no session")
+        t = Tmux("sac", runner=r)
+        with self.assertRaises(TmuxError) as cm:
+            t.check("has-session", "-t", "sac")
+        self.assertIn("no session", str(cm.exception))
 
 
 class TmuxSplitTest(unittest.TestCase):

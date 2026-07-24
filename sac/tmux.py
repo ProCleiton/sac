@@ -9,6 +9,10 @@ import time
 from collections.abc import Callable
 
 
+class TmuxError(Exception):
+    """Erro ao executar comando tmux."""
+
+
 def _default_runner(*args: str) -> subprocess.CompletedProcess:
     return subprocess.run(args, capture_output=True, text=True)
 
@@ -27,6 +31,12 @@ class Tmux:
 
     def _run(self, *args: str) -> subprocess.CompletedProcess:
         return self.runner(*self._cmd(*args))
+
+    def check(self, *args: str) -> subprocess.CompletedProcess:
+        cp = self._run(*args)
+        if cp.returncode != 0:
+            raise TmuxError(cp.stderr.strip() or f"tmux {' '.join(args)} falhou (rc={cp.returncode})")
+        return cp
 
     def _target(self, window: str) -> str:
         return f"{self.session}:{window}"
@@ -47,16 +57,16 @@ class Tmux:
         if env:
             prefix = " ".join(f"{k}={shlex.quote(v)}" for k, v in env.items())
             cmd = f"env {prefix} {cmd}"
-        return self._run("new-session", "-d", "-s", self.session, "-n", window,
-                         *self._pane_id(), cmd).stdout.strip()
+        return self.check("new-session", "-d", "-s", self.session, "-n", window,
+                          *self._pane_id(), cmd).stdout.strip()
 
     def new_window(self, name: str, command: list[str], env: dict[str, str] | None = None) -> str:
         cmd = shlex.join(command)
         if env:
             prefix = " ".join(f"{k}={shlex.quote(v)}" for k, v in env.items())
             cmd = f"env {prefix} {cmd}"
-        return self._run("new-window", "-t", self.session, "-n", name,
-                         *self._pane_id(), cmd).stdout.strip()
+        return self.check("new-window", "-t", self.session, "-n", name,
+                          *self._pane_id(), cmd).stdout.strip()
 
     def split_window(self, target: str, command: list[str], vertical: bool = False,
                      env: dict[str, str] | None = None) -> str:
@@ -64,8 +74,8 @@ class Tmux:
         if env:
             prefix = " ".join(f"{k}={shlex.quote(v)}" for k, v in env.items())
             cmd = f"env {prefix} {cmd}"
-        return self._run("split-window", "-t", self._ptarget(target),
-                         "-v" if vertical else "-h", *self._pane_id(), cmd).stdout.strip()
+        return self.check("split-window", "-t", self._ptarget(target),
+                          "-v" if vertical else "-h", *self._pane_id(), cmd).stdout.strip()
 
     def resize_pane(self, target: str, width: int) -> None:
         self._run("resize-pane", "-t", self._ptarget(target), "-x", str(width))

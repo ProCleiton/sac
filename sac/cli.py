@@ -11,9 +11,10 @@ from .commands import (
     cmd_notify, cmd_recv, cmd_run, cmd_send, cmd_sidebar, cmd_status, cmd_up,
 )
 from .config import ConfigError, load_config
+from .init import cmd_init
 from .daemon import run_daemon
 from .store import Store, StoreError
-from .tmux import Tmux
+from .tmux import Tmux, TmuxError
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -59,12 +60,17 @@ def _build_parser() -> argparse.ArgumentParser:
     sp = sub.add_parser("kill", help="mata e recria o harness de um agente")
     sp.add_argument("agent")
 
+    sub.add_parser("init", help="cria sac.toml + prompts + .sac/ via questionário interativo")
     sub.add_parser("daemon", help="daemon de mensageria (uso interno, sobe no dashboard)")
     return p
 
 
 def main(argv: list[str] | None = None) -> int:
     args = _build_parser().parse_args(argv)
+
+    if args.command == "init":
+        return cmd_init(root=Path(args.config).resolve().parent)
+
     cfg_path = Path(args.config).resolve()
     try:
         cfg = load_config(cfg_path)
@@ -117,6 +123,10 @@ def main(argv: list[str] | None = None) -> int:
                 return run_daemon(cfg, store, tmux)
     except (ConfigError, StoreError) as e:
         print(f"erro: {e}", file=sys.stderr)
+        return 1
+    except TmuxError as e:
+        sock = f" ({cfg.socket})" if cfg.socket else ""
+        print(f"erro tmux: {e} — verifique o socket{sock}", file=sys.stderr)
         return 1
     return 0
 

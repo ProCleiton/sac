@@ -18,6 +18,7 @@ pip install --user -e .    # may need --break-system-packages on Ubuntu 24.04+
 
 ```bash
 python3 -m unittest discover -s tests -v   # test suite
+sac init                                    # interactive wizard: creates sac.toml + prompts/ + .sac/
 sac up                                      # start the tmux session with agents
 sac status                                  # overview
 sac status --clean                          # dry-run: list orphan inbox/claimed
@@ -53,6 +54,15 @@ sac down                                    # stop the session
   between pokes to the same message (base `poke_stale_after`, cap 5 min).
   The legacy `sac notify` applies the same backoff. Prevents poke storms
   during long-running tasks.
+- **Boot progress & fail-fast**: `sac up` shows per-agent progress
+  (`[3/8] agent: creating window... waiting 12s for prompt...`) with
+  elapsed-time-aware waiting. Socket directory is auto-created. Critical
+  tmux failures abort immediately with a clear error message instead of
+  silently pretending success.
+- **`sac init` wizard**: interactive questionnaire that generates a complete
+  `sac.toml`, `prompts/*.md` with the basic SAC contract, `.sac/` skeleton,
+  and socket directory. Name validation (`[A-Za-z0-9_-]`), round-trip TOML
+  validation, overwrite confirmation. Non-TTY: error guiding to `--config`.
 - **Explicit completion contract**: agents signal completion by writing
   `SAC_DONE` and running `sac done <id>` — the daemon does **not** attempt
   turn-detection heuristics (avoids false positives). With the daemon online,
@@ -88,7 +98,6 @@ sac down                                    # stop the session
 - Built with **Python 3** (standard library only) and **tmux**.
 - Designed to orchestrate AI harnesses such as **Kimi Code** (Moonshot AI) and
   **opencode**.
-- Mascot generated via Pollinations.ai (image generation API).
 
 ## License
 

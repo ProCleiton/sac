@@ -4,7 +4,7 @@ from __future__ import annotations
 import os
 import sys
 import time
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from pathlib import Path
 
 from .config import Config, ConfigError
@@ -181,14 +181,19 @@ def cmd_sidebar(cfg: Config, store: Store, tmux: Tmux) -> int:
 
 
 def cmd_up(cfg: Config, store: Store, tmux: Tmux, project_root: Path,
-           boot_wait: float | None = None) -> int:
+           boot_wait: float | None = None, stdout: Callable[..., None] | None = None) -> int:
+    if cfg.socket:
+        Path(cfg.socket).parent.mkdir(parents=True, exist_ok=True)
     if tmux.has_session():
         print(f" sessão '{tmux.session}' já existe — use `sac attach`")
         return 0
+    _out = stdout or (print if sys.stdout.isatty() else lambda s: None)
     agents = sorted(cfg.agents, key=lambda a: a.role != "leader")
+    total = len(agents)
     harness_ids = {}
     first = True
-    for agent in agents:
+    for idx, agent in enumerate(agents, 1):
+        _out(f"[{idx}/{total}] {agent.name}: criando janela...")
         if first:
             sidebar_id = tmux.new_session(agent.name, SIDEBAR_CMD)
             first = False
@@ -200,6 +205,7 @@ def cmd_up(cfg: Config, store: Store, tmux: Tmux, project_root: Path,
         tmux.set_pane_title(harness_id, agent.name)
         harness_ids[agent.name] = harness_id
     # janela dashboard (sidebar + log + notify)
+    _out(f"[{total+1}/{total+1}] dash: criando dashboard...")
     d_side = tmux.new_window("dash", SIDEBAR_CMD)
     d_log = tmux.split_window(d_side, DASH_LOG_CMD)
     tmux.split_window(d_log, DASH_NOTIFY_CMD, vertical=True)
@@ -208,13 +214,21 @@ def cmd_up(cfg: Config, store: Store, tmux: Tmux, project_root: Path,
     leader_name = agents[0].name
     tmux.select_window(leader_name)
     tmux.select_pane(harness_ids[leader_name])
-    # boot wait + prompts (per-agent)
+    # boot wait + prompts (per-agent, com tempo decorrido)
+    boot_start = time.monotonic()
     for agent in agents:
         _boot = boot_wait if boot_wait is not None else (agent.boot_wait if agent.boot_wait is not None else cfg.boot_wait)
         if _boot > 0:
-            time.sleep(_boot)
+            elapsed = time.monotonic() - boot_start
+            remaining = max(0.0, _boot - elapsed)
+            if remaining > 0:
+                _out(f"[.../{total}] {agent.name}: aguardando {remaining:.0f}s para prompt...")
+                time.sleep(remaining)
+            else:
+                _out(f"[.../{total}] {agent.name}: pulando espera (já decorrido {elapsed:.0f}s)...")
         pid = harness_ids.get(agent.name)
         if pid:
+            _out(f"[.../{total}] {agent.name}: injetando prompt...")
             _inject_prompt(tmux, agent, project_root, pane_id=pid)
     agent_names = " ".join(a.name for a in cfg.agents)
     tmux_bin = f"tmux -S {cfg.socket}" if cfg.socket else "tmux"
