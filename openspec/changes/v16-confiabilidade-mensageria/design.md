@@ -14,6 +14,9 @@ Stack: Python 3.11+ stdlib, tmux ≥ 3.0 (testes com pytest). Suíte: ~167 passe
 - `sac done` sempre limpa claimed com verificação atômica (0 ocorrências futuras)
 - Raiz da fila determinística via SAC_ROOT (evitar ambiguidade multi-.sac)
 - Poke sempre acorda o agente (Enter + delay + hint textual)
+- Hierarquia de escalação garantida por padrão: worker → líder → humano
+  (worker NUNCA pergunta ao humano; apenas o líder fala com o humano)
+- Daemon detecta worker sem progresso (N pokes sem done) e escala ao líder
 
 **Non-Goals:**
 - Não alterar o formato do arquivo .msg (cabeçalhos existentes inalterados)
@@ -138,7 +141,64 @@ não termina com newline que o harness reconhece.
 - **Teste de regressão**: mockar `tmux.send_keys` e verificar chamadas em dois
   passos com delay. O delay real não é testado em unidade (só aceitação manual).
 
-### D5. Teste real ao vivo — requisito obrigatório
+### D6. Contrato de escalação injetado por padrão (worker → líder → humano)
+
+**Problema observado (relato do usuário, 24/07)**: um worker perdeu permissão
+de commit na branch e, ao travar, fez a pergunta **diretamente ao humano** em
+vez de se reportar ao líder. A esteira perdeu o fio da tarefa e a mensageria
+se perdeu a partir daí. O SAC não impõe hoje nenhuma regra de hierarquia —
+os prompts dos agentes são templates do usuário e nada garante a regra.
+
+- **Escolha**: o SAC gera um bloco de contrato de escalação (constante
+  `ESCALATION_CONTRACT` em `commands.py`) e o injeta **antes** do prompt_file
+  em todo `_inject_prompt()` — boot (`cmd_up`) e `sac inject` — para todos os
+  agentes, inclusive os sem prompt_file. O bloco é formatado com o nome real
+  do líder (`cfg.leader.name`):
+  - **Workers (role=aux)**: "Você NUNCA fala com o humano. Qualquer dúvida,
+    erro, bloqueio ou falta de permissão: reporte ao líder com
+    `sac send <líder> \"<situação>\"` e aguarde instrução. Ao ser cutucado
+    (poke) e não souber como prosseguir, reporte imediatamente ao líder."
+  - **Líder (role=leader)**: "Você é o ÚNICO que fala com o humano
+    (`sac send user`). Workers se reportam a você — problemas deles são sua
+    responsabilidade de triagem e repasse."
+- **Por que injetado pelo SAC e não apenas nos templates prompts/*.md**: a
+  regra é do sistema, não do projeto do usuário — deve valer mesmo quando o
+  prompt_file não a menciona. Os templates do repo (`prompts/dev.md`,
+  `auditor.md`, `leader.md`) também são atualizados como referência.
+- **Teste de regressão**: mock de `tmux.paste` em `_inject_prompt` verifica
+  que o texto injetado contém o contrato com o nome do líder, antes do
+  conteúdo do prompt_file; e que agente sem prompt_file também recebe o
+  contrato.
+
+### D7. Daemon escala ao líder após N pokes sem progresso
+
+**Problema**: o poke acorda o worker, mas se ele não sabe o que fazer (ex.:
+bloqueado em autorização, erro de ferramenta), ele fica em loop de pokes sem
+`done` — e ninguém fica sabendo. O líder precisa ser informado para recuperar
+a tarefa de onde parou.
+
+- **Escolha**: novo campo `[session] poke_escalate_after` (default 3, mínimo
+  1). Quando `_poke_count[name][sid]` atinge o limite sem `done`, o daemon:
+  1. Registra evento `escalate` no log (agent, id, pokes).
+  2. Envia mensagem automática ao líder via store
+     (sender `daemon`): "worker <w> sem progresso na tarefa <id> após N
+     pokes — possível travamento; inspecione com `sac recv <w>` e decida a
+     recuperação".
+  3. Marca o sid como escalado (não escala de novo pela mesma mensagem);
+     os pokes continuam no teto do backoff (600s).
+- **Texto do poke modificado**: além de "rode `sac done <id>`", o poke passa a
+  incluir: "Se estiver travado ou sem saber como prosseguir, reporte AGORA ao
+  líder: `sac send <líder> \"<situação>\"`". O nome do líder vem de
+  `cfg.leader.name`.
+- **Por que contador de pokes e não scraping do pane** (capture-pane para
+  detectar prompt de permissão do harness): scraping é frágil e varia por
+  harness; o contador já existe (`_poke_count`) e cobre qualquer causa de
+  inanição — inclusive o caso real do worker travado em autorização.
+- **Teste de regressão**: simular claimed stale + N pokes → verificar evento
+  `escalate` no log, mensagem na inbox do líder com sender `daemon`, e que o
+  N+1-ésimo poke não escala novamente.
+
+### D8. Teste real ao vivo — requisito obrigatório
 
 **Lições da v1.4 e v1.5**: ambas passaram no gate do code-auditor com suíte
 100% verde, mas bugs apareceram ao vivo. A validação estática + testes
@@ -167,6 +227,13 @@ unitários não pegam problemas de interação com tmux real e harness real.
   `--sac-root .`. Aceitável — o erro orienta a usar o caminho absoluto.
 - **[R4] Teste real depende de sessão ativa**: se a sessão tiver caído entre a
   implementação e o teste, o testador precisa subi-la. Documentado no script.
+- **[R5] Escalonamento por contador pode gerar falso positivo**: worker lento
+  mas saudável (tarefa longa) pode atingir N pokes. Aceitável — a mensagem ao
+  líder é informativa ("possível travamento"), o líder decide; e
+  `poke_escalate_after` é configurável.
+- **[R6] Contrato de escalação aumenta o prompt injetado**: algumas linhas a
+  mais por boot/inject. Custo desprezível frente ao benefício de a regra
+  valer sempre.
 
 ## Rollback Plan
 
@@ -174,4 +241,7 @@ unitários não pegam problemas de interação com tmux real e harness real.
 2. **done atomicidade**: reverter `Store.finish()` para ordem antiga (move→log).
 3. **SAC_ROOT**: remover campo `root` de `Config`, reverter `Store.__init__`.
 4. **Poke Enter**: reverter `daemon.py` e helpers de send-keys para sem delay.
-5. **Teste real**: sem rollback — é procedimento, não código.
+5. **Protocolo de escalação**: remover `ESCALATION_CONTRACT` de
+   `_inject_prompt`, restaurar texto do poke, remover `poke_escalate_after` e
+   o bloco de escalonamento do daemon.
+6. **Teste real**: sem rollback — é procedimento, não código.

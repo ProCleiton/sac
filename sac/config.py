@@ -32,8 +32,11 @@ class Config:
     session_name: str
     notify_interval: int = 30
     poke_stale_after: int = 120
+    poke_escalate_after: int = 3
     boot_wait: int = 8
     socket: str | None = None
+    root: str | None = None
+    windows: dict[str, str] = field(default_factory=dict)
     agents: list[AgentConfig] = field(default_factory=list)
     loops: list[LoopConfig] = field(default_factory=list)
 
@@ -98,12 +101,40 @@ def load_config(path: Path) -> Config:
             if member not in names:
                 raise ConfigError(f"loop {l.name} referencia agente desconhecido: {member}")
 
+    session_root = session.get("root")
+    if session_root is not None:
+        if not Path(session_root).is_absolute():
+            raise ConfigError(f"session.root deve ser um caminho absoluto: {session_root}")
+
+    windows = {str(k): str(v) for k, v in data.get("windows", {}).items()}
+    if windows:
+        from .layout import leaf_names, parse_spec  # import tardio (evita ciclo)
+        seen: list[str] = []
+        for wname, spec in windows.items():
+            for leaf in leaf_names(parse_spec(spec)):
+                if leaf not in names:
+                    raise ConfigError(f"window '{wname}': agente desconhecido no spec: {leaf}")
+                seen.append(leaf)
+        dups = sorted({n for n in seen if seen.count(n) > 1})
+        if dups:
+            raise ConfigError(f"agente em mais de um pane nos specs [windows]: {dups}")
+        missing = [n for n in names if n not in seen]
+        if missing:
+            raise ConfigError(f"agente ausente dos specs [windows]: {missing}")
+
+    poke_escalate_after = int(session.get("poke_escalate_after", 3))
+    if poke_escalate_after < 1:
+        raise ConfigError(f"session.poke_escalate_after deve ser >= 1: {poke_escalate_after}")
+
     return Config(
         session_name=session.get("name", "sac"),
         notify_interval=int(session.get("notify_interval", 30)),
         poke_stale_after=int(session.get("poke_stale_after", 120)),
+        poke_escalate_after=poke_escalate_after,
         boot_wait=int(session.get("boot_wait", 8)),
         socket=(str(Path(session["socket"]).expanduser()) if session.get("socket") else None),
+        root=session_root,
+        windows=windows,
         agents=agents,
         loops=loops,
     )

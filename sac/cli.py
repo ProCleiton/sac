@@ -8,7 +8,7 @@ from pathlib import Path
 
 from .commands import (
     cmd_done, cmd_down, cmd_inject, cmd_kill, cmd_log, cmd_next,
-    cmd_notify, cmd_recv, cmd_run, cmd_send, cmd_sidebar, cmd_status, cmd_up,
+    cmd_notify, cmd_recv, cmd_run, cmd_send, cmd_sidebar, cmd_sidebar_toggle, cmd_status, cmd_up,
 )
 from .config import ConfigError, load_config
 from .init import cmd_init
@@ -20,6 +20,7 @@ from .tmux import Tmux, TmuxError
 def _build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="sac", description="Stupid Agentic Coordinator")
     p.add_argument("--config", default="sac.toml", help="caminho do sac.toml")
+    p.add_argument("--sac-root", help="diretório raiz da fila (padrão: diretório do config / .sac)")
     sub = p.add_subparsers(dest="command", required=True)
 
     sub.add_parser("up", help="sobe a sessão tmux com os agentes")
@@ -27,6 +28,7 @@ def _build_parser() -> argparse.ArgumentParser:
     sp = sub.add_parser("status", help="visão geral dos agentes e filas")
     sp.add_argument("--clean", action="store_true", help="remove mensagens órfãs de agentes removidos do config")
     sp.add_argument("--yes", action="store_true", help="confirma execução do --clean (sem --yes, apenas simula)")
+    sp.add_argument("--mini", action="store_true", help="resumo de uma linha (n● n!) para o status bar do tmux")
     sub.add_parser("attach", help="atacha à sessão tmux")
     sub.add_parser("next", help="puxa a próxima mensagem da sua inbox (agente)")
 
@@ -51,7 +53,11 @@ def _build_parser() -> argparse.ArgumentParser:
     sp = sub.add_parser("inject", help="re-injeta o prompt_file de um agente")
     sp.add_argument("agent")
 
-    sub.add_parser("sidebar", help="renderiza a sidebar com status dos agentes")
+    sp_sidebar = sub.add_parser("sidebar", help="renderiza a sidebar com status dos agentes")
+    sp_sidebar.add_argument("--toggle", nargs="?", const="", default=None, metavar="WINDOW",
+                            help="cria/mata o pane da sidebar na window (default: atual)")
+    sp_sidebar.add_argument("--watch", action="store_true",
+                            help="loop de atualização in-place (sem flicker)")
 
     sp = sub.add_parser("run", help="dá o pontapé em um loop declarado")
     sp.add_argument("loop")
@@ -78,22 +84,32 @@ def main(argv: list[str] | None = None) -> int:
         print(f"erro de configuração: {e}", file=sys.stderr)
         return 1
 
-    root = cfg_path.parent
-    store = Store(root / ".sac")
+    if args.sac_root:
+        store_root = Path(args.sac_root)
+    elif os.environ.get("SAC_ROOT"):
+        store_root = Path(os.environ["SAC_ROOT"])
+    elif cfg.root:
+        store_root = Path(cfg.root)
+    else:
+        store_root = cfg_path.parent
+    store = Store(store_root)
+    project_root = cfg_path.parent
     tmux = Tmux(cfg.session_name, socket=cfg.socket)
 
     try:
         match args.command:
             case "up":
-                return cmd_up(cfg, store, tmux, root)
+                return cmd_up(cfg, store, tmux, project_root)
             case "inject":
-                return cmd_inject(cfg, tmux, root, args.agent)
+                return cmd_inject(cfg, tmux, project_root, args.agent)
             case "down":
-                return cmd_down(cfg, tmux)
+                return cmd_down(cfg, store, tmux)
             case "status":
-                return cmd_status(cfg, store, tmux, clean=args.clean, yes=args.yes)
+                return cmd_status(cfg, store, tmux, clean=args.clean, yes=args.yes, mini=args.mini)
             case "sidebar":
-                return cmd_sidebar(cfg, store, tmux)
+                if args.toggle is not None:
+                    return cmd_sidebar_toggle(cfg, tmux, args.toggle or None)
+                return cmd_sidebar(cfg, store, tmux, watch=args.watch)
             case "attach":
                 cmd = ["tmux"]
                 if cfg.socket:
@@ -118,7 +134,7 @@ def main(argv: list[str] | None = None) -> int:
                 cmd_run(cfg, store, tmux, args.loop, args.task)
                 return 0
             case "kill":
-                return cmd_kill(cfg, store, tmux, root, args.agent)
+                return cmd_kill(cfg, store, tmux, project_root, args.agent)
             case "daemon":
                 return run_daemon(cfg, store, tmux)
     except (ConfigError, StoreError) as e:

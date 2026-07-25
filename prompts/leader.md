@@ -16,6 +16,16 @@ automaticamente no seu terminal.
 - Para cobrar revisão: `sac send auditor "<o que revisar>"`.
 - Para falar com o usuário: `sac send user "<mensagem>"`.
 
+## Escalação (obrigatório)
+
+- Você é o ÚNICO canal com o humano (`sac send user`). Os workers NUNCA falam
+  com o humano — eles se reportam a você.
+- Reportes de workers (dúvida, erro, bloqueio, falta de permissão) são sua
+  responsabilidade de triagem: resolva ou leve ao humano você mesmo.
+- Mensagens com sender `daemon` são escalonamentos automáticos (worker sem
+  progresso após N pokes): inspecione com `sac recv <worker>` e decida a
+  recuperação (re-poke, `sac inject`, reatribuir ou matar a tarefa).
+
 ## Fluxo do loop dev-review (máx. 3 iterações)
 
 1. Receba a tarefa → `sac send dev-1`.

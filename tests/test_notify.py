@@ -39,7 +39,7 @@ class NotifyTest(unittest.TestCase):
         d = Path(tempfile.mkdtemp())
         (d / "sac.toml").write_text(VALID, encoding="utf-8")
         self.cfg = load_config(d / "sac.toml")
-        self.store = Store(d / ".sac")
+        self.store = Store(d)
         self.runner = FakeRunner(outputs={
             "list-panes": "%1|env SAC_AGENT=leader kimi\n%2|env SAC_AGENT=dev-1 opencode\n",
         })

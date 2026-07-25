@@ -89,18 +89,22 @@ class DaemonFlagTest(unittest.TestCase):
         d._remove_pid()
         self.assertFalse(d._pid_path().exists())
 
-    def test_deliver_next_uses_paste_and_header(self):
+    def test_deliver_next_uses_send_keys_with_hint(self):
         from sac.daemon import Daemon
+        from unittest.mock import patch
         runner = FakeRunner()
         tmux = Tmux("sac-test", runner=runner)
         runner.outputs["list-panes"] = "%2|env SAC_AGENT=dev-1 opencode\n"
         d = Daemon(self.cfg, self.store, tmux)
         mid = self.store.send("user", "dev-1", "execute task X")
-        d._deliver_next("dev-1")
-        paste_calls = [c for c in runner.calls if c[1] == "paste-buffer"]
-        self.assertEqual(len(paste_calls), 1, "deve usar paste")
+        with patch("sac.tmux.time.sleep"):
+            d._deliver_next("dev-1")
+        send_body = [c for c in runner.calls if c[1] == "send-keys" and len(c) > 3 and "-l" in c]
+        self.assertEqual(len(send_body), 1, "deve usar send-keys -l")
         enter_calls = [c for c in runner.calls if c[1] == "send-keys" and c[-1] == "Enter"]
-        self.assertEqual(len(enter_calls), 1, "deve dar enter após paste")
+        self.assertEqual(len(enter_calls), 1, "deve dar enter separado")
+        self.assertIn("SAC: mensagem", str(send_body[0]),
+                      "body deve conter hint")
         self.assertEqual(len(self.store.pending("dev-1")), 0, "msg deve ser claimed")
         log = (self.store.root / "log.jsonl").read_text(encoding="utf-8")
         self.assertIn("deliver", log)
@@ -123,19 +127,21 @@ class DaemonFlagTest(unittest.TestCase):
         tmux = Tmux("sac-test", runner=runner)
         d = Daemon(self.cfg, self.store, tmux)
         d._deliver_next("dev-1")
-        paste_calls = [c for c in runner.calls if c[1] == "paste-buffer"]
-        self.assertEqual(len(paste_calls), 0, "sem pendentes, sem paste")
+        send_body = [c for c in runner.calls if c[1] == "send-keys" and len(c) > 3 and "-l" in c]
+        self.assertEqual(len(send_body), 0, "sem pendentes, sem send-keys")
 
     def test_process_agent_delivers_pending(self):
         from sac.daemon import Daemon
+        from unittest.mock import patch
         runner = FakeRunner()
         tmux = Tmux("sac-test", runner=runner)
         runner.outputs["list-panes"] = "%2|env SAC_AGENT=dev-1 opencode\n"
         d = Daemon(self.cfg, self.store, tmux)
         self.store.send("user", "dev-1", "new task")
-        d._process_agent("dev-1")
-        paste_calls = [c for c in runner.calls if c[1] == "paste-buffer"]
-        self.assertEqual(len(paste_calls), 1, "deve entregar pendente via paste")
+        with patch("sac.tmux.time.sleep"):
+            d._process_agent("dev-1")
+        send_body = [c for c in runner.calls if c[1] == "send-keys" and len(c) > 3 and "-l" in c]
+        self.assertEqual(len(send_body), 1, "deve entregar pendente via send-keys")
 
     def test_process_agent_stale_poke(self):
         from sac.daemon import Daemon
@@ -279,6 +285,52 @@ class DaemonFlagTest(unittest.TestCase):
         self.assertGreater(int_a_poked, int_a,
                            "msg-a com 1 poke deve ter intervalo maior que msg-b sem pokes")
 
+    def test_deliver_reply_unknown_agent(self):
+        from sac.daemon import Daemon
+        from sac.config import ConfigError
+        from unittest.mock import patch
+        runner = FakeRunner()
+        tmux = Tmux("sac-test", runner=runner)
+        runner.outputs["list-panes"] = "%1|env SAC_AGENT=leader kimi\n"
+        d = Daemon(self.cfg, self.store, tmux)
+        self.store.send("leader", "dev-1", "task", now=datetime.now())
+        self.store.next("dev-1")
+        self.store.send("dev-1", "leader", "reply", now=datetime.now())
+        with patch.object(self.cfg, 'agent', side_effect=ConfigError("unknown")):
+            d._process_agent("leader")
+        log = (self.store.root / "log.jsonl").read_text(encoding="utf-8")
+        self.assertIn("loop_error", log, "cfg.agent falhando deve logar loop_error")
+
+    def test_deliver_reply_pane_not_found(self):
+        from sac.daemon import Daemon
+        runner = FakeRunner(outputs={"list-panes": "%1|some other process\n"})
+        tmux = Tmux("sac-test", runner=runner)
+        d = Daemon(self.cfg, self.store, tmux)
+        mid = self.store.send("user", "dev-1", "task", now=datetime.now())
+        d._deliver_next("dev-1")
+        self.assertEqual(self.store.pending("dev-1"), [mid],
+                         "sem pane: msg não deve ser removida da inbox")
+        log = (self.store.root / "log.jsonl").read_text(encoding="utf-8")
+        self.assertIn("deliver_skip", log,
+                      "sem pane: deve logar deliver_skip")
+
+    def test_daemon_deliver_with_forced_enter(self):
+        from sac.daemon import Daemon
+        from unittest.mock import patch
+        runner = FakeRunner()
+        tmux = Tmux("sac-test", runner=runner)
+        runner.outputs["list-panes"] = "%2|env SAC_AGENT=dev-1 opencode\n"
+        d = Daemon(self.cfg, self.store, tmux)
+        self.store.send("leader", "dev-1", "task body", now=datetime.now())
+        with patch("sac.tmux.time.sleep"):
+            d._deliver_next("dev-1")
+        send_body = [c for c in runner.calls if c[1] == "send-keys" and len(c) > 3 and "-l" in c]
+        enter_calls = [c for c in runner.calls if c[1] == "send-keys" and c[-1] == "Enter"]
+        self.assertEqual(len(send_body), 1, "deve enviar body com send-keys -l")
+        self.assertEqual(len(enter_calls), 1, "deve enviar Enter separado")
+        self.assertIn("SAC: mensagem", str(runner.calls),
+                      "body deve conter hint SAC: mensagem")
+
     def test_daemon_backoff_caps_at_600s(self):
         from sac.daemon import Daemon
         d = Daemon(self.cfg, self.store, Tmux("sac-test"))
@@ -292,3 +344,68 @@ class DaemonFlagTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class EscalationTest(unittest.TestCase):
+    def setUp(self):
+        self.d = Path(tempfile.mkdtemp())
+        (self.d / "sac.toml").write_text(VALID, encoding="utf-8")
+        self.cfg = load_config(self.d / "sac.toml")
+        self.store = Store(self.d / ".sac")
+
+    def _make_daemon(self):
+        from sac.daemon import Daemon
+        runner = FakeRunner()
+        runner.outputs["list-panes"] = "%1|env SAC_AGENT=leader kimi\n%2|env SAC_AGENT=dev-1 opencode\n"
+        tmux = Tmux("sac-test", runner=runner)
+        return Daemon(self.cfg, self.store, tmux), runner
+
+    def _stale_claim(self):
+        old = datetime.now() - timedelta(seconds=300)
+        mid = self.store.send("user", "dev-1", "old task", now=old)
+        self.store.next("dev-1")
+        return mid
+
+    def _poke(self, d):
+        d._poke_state.clear()  # zera o throttle para forçar o próximo poke
+        d._process_agent("dev-1")
+
+    def _log_text(self):
+        return (self.store.root / "log.jsonl").read_text(encoding="utf-8")
+
+    def test_poke_text_instrui_reporte(self):
+        d, runner = self._make_daemon()
+        self._stale_claim()
+        d._process_agent("dev-1")
+        poke_calls = [c for c in runner.calls if "pendente" in str(c)]
+        self.assertEqual(len(poke_calls), 1, "deve cutucar tarefa stale")
+        body = str(poke_calls[0])
+        self.assertIn("reporte AGORA", body, "poke deve instruir reporte imediato")
+        self.assertIn("sac send leader", body, "poke deve citar o nome real do líder")
+
+    def test_daemon_escalate_apos_n_pokes(self):
+        d, runner = self._make_daemon()
+        mid = self._stale_claim()
+        for _ in range(3):
+            self._poke(d)
+        log = self._log_text()
+        self.assertIn('"escalate"', log, "3º poke sem done deve logar escalate")
+        leader_pending = self.store.pending("leader")
+        self.assertEqual(len(leader_pending), 1, "líder deve receber 1 mensagem de escalonamento")
+        self.assertTrue(leader_pending[0].endswith("-from-daemon"),
+                        "escalonamento deve ter sender 'daemon'")
+        msg_file = next((self.store.root / "inbox" / "leader").glob("*.msg"))
+        content = msg_file.read_text(encoding="utf-8")
+        self.assertIn("sem progresso", content)
+        self.assertIn(mid, content)
+
+    def test_daemon_escalate_uma_vez(self):
+        d, runner = self._make_daemon()
+        self._stale_claim()
+        for _ in range(4):
+            self._poke(d)
+        log = self._log_text()
+        self.assertEqual(log.count('"escalate"'), 1,
+                         "4º poke na mesma mensagem NÃO deve escalar de novo")
+        self.assertEqual(len(self.store.pending("leader")), 1,
+                         "apenas 1 mensagem de escalonamento ao líder")

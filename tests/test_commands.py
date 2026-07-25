@@ -150,6 +150,31 @@ class CommandsTest(unittest.TestCase):
         done, text = extract_reply("trabalhando...\nsem sentinela ainda\n")
         self.assertFalse(done)
 
+    def test_send_fallback_poke_sem_daemon(self):
+        from unittest.mock import patch
+        runner = FakeRunner(outputs={
+            "list-panes": "%2|env SAC_AGENT=dev-1 opencode\n",
+        })
+        tmux = Tmux("sac-test", runner=runner)
+        with patch("sac.tmux.time.sleep"):
+            cmd_send(self.cfg, self.store, tmux, "dev-1", "tarefa")
+        send_body = [c for c in runner.calls if c[1] == "send-keys" and len(c) > 3 and "-l" in c]
+        enter_calls = [c for c in runner.calls if c[1] == "send-keys" and c[-1] == "Enter"]
+        self.assertGreaterEqual(len(send_body), 1, "sem daemon: deve cutucar com send-keys -l")
+        self.assertGreaterEqual(len(enter_calls), 1, "sem daemon: deve enviar Enter")
+
+    def test_send_poke_with_hint(self):
+        from unittest.mock import patch
+        runner = FakeRunner(outputs={
+            "list-panes": "%2|env SAC_AGENT=dev-1 opencode\n",
+        })
+        tmux = Tmux("sac-test", runner=runner)
+        with patch("sac.tmux.time.sleep"):
+            cmd_send(self.cfg, self.store, tmux, "dev-1", "faça X")
+        body_args = [c[-1] for c in runner.calls if c[1] == "send-keys" and c[-1] != "Enter"]
+        self.assertTrue(any("SAC: mensagem" in str(b) for b in body_args),
+                        "body deve conter hint SAC: mensagem")
+
     def test_log_follow_io_error(self):
         from unittest.mock import patch
         from pathlib import Path
@@ -251,18 +276,41 @@ class UpDownStatusTest(unittest.TestCase):
 
     def test_down_kills_existing_session(self):
         t = Tmux("sac-test", runner=FakeRunner(rc=0))
-        rc = cmd_down(self.cfg, t)
+        rc = cmd_down(self.cfg, self.store, t)
         self.assertEqual(rc, 0)
 
     def test_down_without_session(self):
         t = Tmux("sac-test", runner=FakeRunner(rc=1))
-        self.assertEqual(cmd_down(self.cfg, t), 0)
+        self.assertEqual(cmd_down(self.cfg, self.store, t), 0)
 
     def test_status_lists_agents(self):
         t = Tmux("sac-test", runner=FakeRunner(rc=0, outputs={"list-panes": "%1|env SAC_AGENT=leader kimi\n%2|env SAC_AGENT=dev-1 opencode\n"}))
         self.store.send("leader", "dev-1", "t1")
         self.store.send("leader", "dev-1", "t2")
         self.assertEqual(cmd_status(self.cfg, self.store, t), 0)
+
+    def test_status_mini_contadores(self):
+        import io
+        from contextlib import redirect_stdout
+        t = Tmux("sac-test", runner=FakeRunner(rc=1))
+        self.store.send("user", "dev-1", "m1")
+        self.store.next("dev-1")                                  # claimed
+        self.store.log("escalate", agent="auditor", id="x", pokes=3)  # escalado
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            rc = cmd_status(self.cfg, self.store, t, mini=True)
+        self.assertEqual(rc, 0)
+        self.assertEqual(buf.getvalue().strip(), "1● 1!")
+
+    def test_status_mini_vazio_sem_store(self):
+        import io
+        from contextlib import redirect_stdout
+        t = Tmux("sac-test", runner=FakeRunner(rc=1))
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            rc = cmd_status(self.cfg, self.store, t, mini=True)
+        self.assertEqual(rc, 0)
+        self.assertEqual(buf.getvalue().strip(), "")
 
     def test_cmd_status_clean(self):
         r = FakeRunner(rc=0, outputs={"list-panes": "%1|env SAC_AGENT=leader kimi\n"})
@@ -343,8 +391,8 @@ class UpDownStatusTest(unittest.TestCase):
         t = Tmux("sac-test", runner=r)
         cmd_up(self.cfg, self.store, t, self.root, boot_wait=0)
         set_hook_calls = [c for c in r.calls if c[1] == "set-hook"]
-        self.assertEqual(len(set_hook_calls), 1, "deve registrar hook client-resized")
-        self.assertIn("client-resized", str(set_hook_calls[0]))
+        resize_hooks = [c for c in set_hook_calls if "client-resized" in str(c)]
+        self.assertEqual(len(resize_hooks), 1, "deve registrar hook client-resized")
 
     def test_hook_valid_structure(self):
         r = FakeRunner(outputs={("rc", "has-session"): 1, "list-windows": "leader\ndev-1\ndash\n"})
@@ -547,3 +595,607 @@ class KillTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class EscalationContractTest(unittest.TestCase):
+    def setUp(self):
+        d = Path(tempfile.mkdtemp())
+        (d / "sac.toml").write_text(VALID, encoding="utf-8")
+        (d / "prompts").mkdir()
+        (d / "prompts" / "leader.md").write_text("Você é o leader.", encoding="utf-8")
+        (d / "prompts" / "dev.md").write_text("Você é o dev-1.", encoding="utf-8")
+        self.root = d
+        self.cfg = load_config(d / "sac.toml")
+        self.runner = FakeRunner(outputs={"list-panes": "%1|env SAC_AGENT=leader kimi\n%2|env SAC_AGENT=dev-1 opencode\n"})
+        self.tmux = Tmux("sac-test", runner=self.runner)
+
+    def _injected_text(self, agent_name):
+        from unittest.mock import patch
+        with patch.object(self.tmux, "paste") as m_paste, \
+             patch.object(self.tmux, "press_enter"):
+            rc = cmd_inject(self.cfg, self.tmux, self.root, agent_name)
+        self.assertEqual(rc, 0, f"cmd_inject({agent_name}) deve retornar 0")
+        self.assertTrue(m_paste.called, "contrato deve ser injetado via paste")
+        return m_paste.call_args[0][1]
+
+    def test_inject_prompt_inclui_contrato(self):
+        text = self._injected_text("dev-1")
+        self.assertIn("CONTRATO DE ESCALAÇÃO", text)
+        self.assertLess(text.index("CONTRATO DE ESCALAÇÃO"), text.index("Você é o dev-1."),
+                        "contrato deve vir ANTES do conteúdo do prompt_file")
+        self.assertIn('sac send leader "', text,
+                      "contrato do worker deve instruir reporte com o nome real do líder")
+
+    def test_inject_sem_prompt_file_recebe_contrato(self):
+        text = VALID.replace('prompt_file = "prompts/dev.md"\n', "")
+        (self.root / "sac.toml").write_text(text, encoding="utf-8")
+        self.cfg = load_config(self.root / "sac.toml")
+        injected = self._injected_text("dev-1")
+        self.assertIn("CONTRATO DE ESCALAÇÃO", injected,
+                      "agente sem prompt_file também deve receber o contrato")
+
+    def test_contrato_leader_vs_worker(self):
+        leader_text = self._injected_text("leader")
+        self.assertIn("ÚNICO canal com o humano", leader_text)
+        self.assertIn("sac send user", leader_text)
+        worker_text = self._injected_text("dev-1")
+        self.assertIn("NUNCA fala diretamente com o humano", worker_text)
+        self.assertNotIn("sac send user", worker_text,
+                         "worker não deve ser instruído a falar com o humano")
+
+
+class DoneFailureTest(unittest.TestCase):
+    def test_cmd_done_move_falha_retorna_1_sem_sucesso(self):
+        import io
+        from contextlib import redirect_stdout
+        d = Path(tempfile.mkdtemp())
+        store = Store(d)
+        from unittest.mock import patch
+        buf = io.StringIO()
+        with patch.object(store, "done", return_value=False), redirect_stdout(buf):
+            rc = cmd_done(store, {"SAC_AGENT": "dev-1"}, "qualquer-id", "resumo")
+        self.assertEqual(rc, 1, "move falho deve retornar 1")
+        self.assertNotIn("concluída", buf.getvalue(),
+                         "move falho NÃO pode imprimir mensagem de sucesso")
+
+
+class DownCleanupTest(unittest.TestCase):
+    def setUp(self):
+        d = Path(tempfile.mkdtemp())
+        (d / "sac.toml").write_text(VALID, encoding="utf-8")
+        self.root = d
+        self.cfg = load_config(d / "sac.toml")
+        self.store = Store(d)
+        self.runner = FakeRunner(rc=0, outputs={
+            "list-panes": "%1|env SAC_AGENT=leader kimi\n%2|env SAC_AGENT=dev-1 opencode\n",
+        })
+        self.tmux = Tmux("sac-test", runner=self.runner)
+
+    def test_down_mata_harness_1_a_1_antes_da_sessao(self):
+        from unittest.mock import patch
+        with patch("sac.commands.time.sleep"), patch("sac.commands.os.kill"):
+            rc = cmd_down(self.cfg, self.store, self.tmux)
+        self.assertEqual(rc, 0)
+        kill_panes = [c for c in self.runner.calls if c[1] == "kill-pane"]
+        self.assertEqual(len(kill_panes), 2, "mata o pane do harness de cada agente, 1 a 1")
+        idx_kill_session = next(i for i, c in enumerate(self.runner.calls)
+                                if c[1] == "kill-session")
+        for c in kill_panes:
+            self.assertLess(self.runner.calls.index(c), idx_kill_session,
+                            "harnesses morrem ANTES do kill-session")
+        self.assertLess(self.runner.calls.index(kill_panes[0]),
+                        self.runner.calls.index(kill_panes[1]),
+                        "ordem sequencial: leader primeiro, depois dev-1")
+
+    def test_down_mata_daemon_pelo_pidfile(self):
+        import signal
+        from unittest.mock import patch
+        self.store.root.mkdir(parents=True, exist_ok=True)
+        (self.store.root / "daemon.pid").write_text("12345", encoding="utf-8")
+
+        def morre_no_probe(pid, sig):
+            if sig == 0:
+                raise ProcessLookupError
+
+        with patch("sac.commands.time.sleep"), \
+             patch("sac.commands.os.kill", side_effect=morre_no_probe) as m_kill:
+            rc = cmd_down(self.cfg, self.store, self.tmux)
+        self.assertEqual(rc, 0)
+        self.assertEqual(m_kill.call_args_list[0][0], (12345, signal.SIGTERM))
+        self.assertFalse((self.store.root / "daemon.pid").exists(),
+                         "pid file deve ser removido")
+
+    def test_down_sem_sessao_tambem_mata_daemon_detached(self):
+        import signal
+        from unittest.mock import patch
+        self.store.root.mkdir(parents=True, exist_ok=True)
+        (self.store.root / "daemon.pid").write_text("12345", encoding="utf-8")
+        t = Tmux("sac-test", runner=FakeRunner(rc=1))
+
+        def morre_no_probe(pid, sig):
+            if sig == 0:
+                raise ProcessLookupError
+
+        with patch("sac.commands.os.kill", side_effect=morre_no_probe) as m_kill:
+            rc = cmd_down(self.cfg, self.store, t)
+        self.assertEqual(rc, 0)
+        self.assertEqual(m_kill.call_args_list[0][0], (12345, signal.SIGTERM))
+
+
+class KillDaemonTest(unittest.TestCase):
+    def setUp(self):
+        d = Path(tempfile.mkdtemp())
+        (d / "sac.toml").write_text(VALID, encoding="utf-8")
+        self.cfg = load_config(d / "sac.toml")
+        self.store = Store(d)
+        self.store.root.mkdir(parents=True, exist_ok=True)
+        (self.store.root / "daemon.pid").write_text("12345", encoding="utf-8")
+
+    @staticmethod
+    def _morre_no_probe(pid, sig):
+        if sig == 0:
+            raise ProcessLookupError
+
+    def test_sigterm_basta_quando_daemon_morre(self):
+        import signal
+        from unittest.mock import patch
+        from sac.commands import _kill_daemon
+        with patch("sac.commands.time.sleep"), \
+             patch("sac.commands.os.kill", side_effect=self._morre_no_probe) as m:
+            _kill_daemon(self.store)
+        calls = m.call_args_list
+        self.assertEqual(calls[0][0], (12345, signal.SIGTERM))
+        self.assertNotIn((12345, signal.SIGKILL), [c[0] for c in calls],
+                         "daemon que morre com TERM não deve levar KILL")
+        self.assertFalse((self.store.root / "daemon.pid").exists())
+
+    def test_sigkill_quando_daemon_teimoso(self):
+        import signal
+        from unittest.mock import patch
+        from sac.commands import _kill_daemon
+        with patch("sac.commands.time.sleep"), \
+             patch("sac.commands.os.kill") as m:  # nunca morre no probe
+            _kill_daemon(self.store)
+        sigs = [c[0][1] for c in m.call_args_list]
+        self.assertEqual(sigs[0], signal.SIGTERM)
+        self.assertIn(signal.SIGKILL, sigs,
+                      "daemon vivo após a espera deve levar SIGKILL")
+        self.assertFalse((self.store.root / "daemon.pid").exists())
+
+    def test_pid_invalido_so_remove_arquivo(self):
+        from unittest.mock import patch
+        from sac.commands import _kill_daemon
+        (self.store.root / "daemon.pid").write_text("abc", encoding="utf-8")
+        with patch("sac.commands.os.kill") as m:
+            _kill_daemon(self.store)
+        m.assert_not_called()
+        self.assertFalse((self.store.root / "daemon.pid").exists())
+
+
+GRID_VALID = """
+[session]
+name = "sac-test"
+
+[[agents]]
+name = "leader"
+command = "kimi"
+role = "leader"
+
+[[agents]]
+name = "dev-1"
+command = "opencode"
+role = "aux"
+
+[[agents]]
+name = "auditor"
+command = "kimi"
+role = "aux"
+
+[windows]
+main = "leader"
+trabalho = "dev-1,auditor"
+"""
+
+
+class UpGridTest(unittest.TestCase):
+    def setUp(self):
+        d = Path(tempfile.mkdtemp())
+        (d / "sac.toml").write_text(GRID_VALID, encoding="utf-8")
+        self.root = d
+        self.cfg = load_config(d / "sac.toml")
+        self.store = Store(d)
+        self.runner = FakeRunner(outputs={"display-message": "100", ("rc", "has-session"): 1})
+        self.tmux = Tmux("sac-test", runner=self.runner)
+
+    def _splits(self):
+        return [c for c in self.runner.calls if c[1] == "split-window"]
+
+    def test_up_grid_materializacao(self):
+        rc = cmd_up(self.cfg, self.store, self.tmux, self.root, boot_wait=0)
+        self.assertEqual(rc, 0)
+        # windows: main (new-session), trabalho e dash (new-window), nesta ordem
+        news = [c for c in self.runner.calls if c[1] in ("new-session", "new-window")]
+        win_names = [c[c.index("-n") + 1] for c in news]
+        self.assertEqual(win_names, ["main", "trabalho", "dash"])
+        splits = self._splits()
+        # area do leader: split -h -l 72 (100 - 28 da sidebar) a partir do sidebar (%1)
+        self.assertEqual(splits[0][splits[0].index("-l") + 1], "72")
+        self.assertEqual(splits[0][splits[0].index("-t") + 1], "%1")
+        self.assertIn("SAC_AGENT=leader", splits[0][-1])
+        # row do auditor: split -v -l 50 a partir do dev-1 (%4)
+        row = next(c for c in splits if "SAC_AGENT=auditor" in c[-1])
+        self.assertIn("-v", row)
+        self.assertNotIn("-f", row, "split de empilhamento NÃO usa -f (só a célula)")
+        self.assertEqual(row[row.index("-t") + 1], "%4")
+        self.assertEqual(row[row.index("-l") + 1], "50")
+        # dev-1 (area da window trabalho): split -h -l 72 a partir de %3
+        dev = next(c for c in splits if "SAC_AGENT=dev-1" in c[-1])
+        self.assertEqual(dev[dev.index("-t") + 1], "%3")
+        # sidebar 15% de 100 = 15 → piso 28 colunas
+        resizes = [c for c in self.runner.calls if c[1] == "resize-pane"]
+        self.assertTrue(any(c[c.index("-x") + 1] == "28" for c in resizes),
+                        "sidebar usa piso de 28 colunas quando 15% < 28")
+        # select final: entry window main, pane do leader
+        sel_w = [c for c in self.runner.calls if c[1] == "select-window"]
+        self.assertEqual(sel_w[-1][-1], "sac-test:main")
+        sel_p = [c for c in self.runner.calls if c[1] == "select-pane" and "-T" not in c]
+        self.assertEqual(sel_p[-1][-1], "%2")
+
+    def test_up_grid_sem_windows_mantem_legado(self):
+        (self.root / "sac.toml").write_text(VALID, encoding="utf-8")
+        cfg = load_config(self.root / "sac.toml")
+        rc = cmd_up(cfg, self.store, self.tmux, self.root, boot_wait=0)
+        self.assertEqual(rc, 0)
+        splits = self._splits()
+        self.assertFalse(any("-f" in c for c in splits),
+                         "layout legado não usa split full-height")
+        win_names = [c[c.index("-n") + 1] for c in self.runner.calls
+                     if c[1] in ("new-session", "new-window")]
+        self.assertEqual(win_names, ["leader", "dev-1", "dash"])
+
+
+class SidebarV2Test(unittest.TestCase):
+    def setUp(self):
+        d = Path(tempfile.mkdtemp())
+        (d / "sac.toml").write_text(GRID_VALID, encoding="utf-8")
+        self.cfg = load_config(d / "sac.toml")
+        self.store = Store(d)
+
+    def _render(self):
+        import io
+        import re
+        from contextlib import redirect_stdout
+        t = Tmux("sac-test", runner=FakeRunner(outputs={
+            "list-windows": "main|0\ntrabalho|1\ndash|0\n",
+            "list-panes|-s": "main|leader|1|%2\nmain||0|%1\ntrabalho|dev-1|1|%4\ntrabalho|auditor|0|%5\ndash||0|%6\n",
+        }))
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            rc = cmd_sidebar(self.cfg, self.store, t)
+        self.assertEqual(rc, 0)
+        raw = buf.getvalue()
+        self.assertIn("\033[", raw, "sidebar v2 deve usar cores ANSI")
+        return re.sub(r"\033\[[0-9;]*m", "", raw)
+
+    def test_tree_indicadores_e_foco(self):
+        self.store.send("user", "dev-1", "msg1")
+        self.store.next("dev-1")          # claimed → ●
+        self.store.send("user", "auditor", "msg2")  # inbox → ◐
+        self.store.log("escalate", agent="auditor", id="x", pokes=3)  # → !
+        out = self._render()
+        self.assertIn("> trabalho", out)                # window ativa
+        self.assertTrue(out.startswith("  main"), "window inativa sem >")
+        self.assertIn("\n  └─ leader · kimi", out)      # ocioso, sem * (foco é da window ativa)
+        self.assertIn("├─ * dev-1 ● opencode", out)     # claimed + focado na window ativa
+        self.assertIn("└─ auditor ! kimi", out)         # escalado (prioridade sobre inbox)
+        self.assertIn("\n  dash", out)                  # window sem agentes aparece
+
+    def test_comms_ultimos_5_formato(self):
+        for i in range(8):
+            self.store.send("user", "dev-1", f"m{i}")
+        out = self._render()
+        comms = out.split("comms", 1)[1]
+        lines = [l for l in comms.strip().splitlines() if l.strip() and "→" in l]
+        self.assertEqual(len(lines), 5, "comms mostra os 5 eventos mais recentes")
+        self.assertRegex(lines[0], r"^\s+\d{2}:\d{2} user→dev-1 send")
+
+    def test_tips_presente(self):
+        out = self._render()
+        self.assertIn("tips", out)
+        self.assertIn("C-b e", out)
+        self.assertIn("C-b z", out)
+
+
+GRID_V3_MODEL = """
+[session]
+name = "sac-test"
+
+[[agents]]
+name = "leader"
+command = "kimi"
+args = ["--model", "esteira/k3", "--yolo"]
+role = "leader"
+
+[[agents]]
+name = "dev-1"
+command = "opencode"
+role = "aux"
+
+[windows]
+main = "leader"
+trabalho = "dev-1"
+"""
+
+
+class SidebarV3Test(unittest.TestCase):
+    def setUp(self):
+        d = Path(tempfile.mkdtemp())
+        (d / "sac.toml").write_text(GRID_V3_MODEL, encoding="utf-8")
+        self.cfg = load_config(d / "sac.toml")
+        self.store = Store(d)
+
+    def _render(self):
+        import io
+        import re
+        from contextlib import redirect_stdout
+        t = Tmux("sac-test", runner=FakeRunner(outputs={
+            "list-windows": "main|0\ntrabalho|1\n",
+            "list-panes|-s": "main|leader|0|%2\ntrabalho|dev-1|1|%4\n",
+        }))
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            rc = cmd_sidebar(self.cfg, self.store, t)
+        self.assertEqual(rc, 0)
+        return re.sub(r"\033\[[0-9;]*m", "", buf.getvalue())
+
+    def test_modelo_extraido_dos_args(self):
+        out = self._render()
+        self.assertIn("└─ leader · kimi/k3", out)   # alias esteira/ removido
+        self.assertIn("└─ * dev-1 · opencode", out)    # agente único na window → └─; sem --model → só comando
+        self.assertNotIn("esteira/", out)
+
+    def test_badge_inbox_e_tempo_ocioso(self):
+        self.store.send("user", "dev-1", "m1")
+        self.store.send("user", "dev-1", "m2")
+        from datetime import datetime, timedelta
+        self.store.log("poke", now=datetime.now() - timedelta(seconds=300),
+                       agent="dev-1", count=1)
+        out = self._render()
+        linha = next(l for l in out.splitlines() if "dev-1" in l)
+        self.assertIn("(2)", linha)                  # badge de inbox
+        self.assertIn("· 5m", linha)                 # idade do último evento
+
+    def test_sem_eventos_sem_idade(self):
+        out = self._render()
+        linha = next(l for l in out.splitlines() if "leader" in l)
+        self.assertNotIn("· 0m", linha)
+        self.assertRegex(linha, r"kimi/k3\s*$")
+
+    def test_identidade_via_agent_option_nao_pane_title(self):
+        """Harness troca o pane_title (kimi vira 'Kimi Code') — a árvore usa @agent."""
+        import io
+        import re
+        from contextlib import redirect_stdout
+        r = FakeRunner(outputs={
+            "list-windows": "main|0\ntrabalho|1\n",
+            "list-panes|-s": "main|leader|0|%2\ntrabalho|dev-1|1|%4\n",
+        })
+        t = Tmux("sac-test", runner=r)
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            rc = cmd_sidebar(self.cfg, self.store, t)
+        self.assertEqual(rc, 0)
+        fmt = next(c[-1] for c in r.calls if c[1] == "list-panes")
+        self.assertIn("#{@agent}", fmt, "list-panes deve pedir @agent (estável), não pane_title")
+        self.assertNotIn("pane_title", fmt)
+        out = re.sub(r"\033\[[0-9;]*m", "", buf.getvalue())
+        self.assertIn("leader", out)
+        self.assertIn("dev-1", out)
+
+    def test_comando_com_path_usa_basename(self):
+        from types import SimpleNamespace
+        from sac.commands import _agent_model
+        a = SimpleNamespace(command="/tmp/x/bin/fake", args=["--model", "esteira/k3"])
+        self.assertEqual(_agent_model(a), "fake/k3")
+        b = SimpleNamespace(command="/usr/bin/opencode", args=[])
+        self.assertEqual(_agent_model(b), "opencode")
+
+    def test_linhas_truncadas_na_largura_do_terminal(self):
+        import shutil
+        from unittest.mock import patch
+        longo = "x" * 120
+        self.store.send("user", "dev-1", longo)
+        with patch.object(shutil, "get_terminal_size") as gts:
+            gts.return_value = shutil.os.terminal_size((30, 24))
+            out = self._render()
+        import re as _re
+        for linha in out.splitlines():
+            visivel = _re.sub(r"\033\[[0-9;]*m", "", linha)
+            self.assertLessEqual(len(visivel), 30, f"linha excede a largura: {linha!r}")
+
+    def test_frame_limpa_cada_linha(self):
+        from sac.commands import _frame
+        f = _frame("abc\nde")
+        self.assertTrue(f.startswith("\033[H"))
+        self.assertTrue(f.endswith("\033[J"))
+        self.assertEqual(f.count("\033[K"), 2, "cada linha limpa até o fim (sem restos de frames anteriores)")
+        self.assertNotIn("\033[K\n\033[J", f, "sem newline extra após a última linha")
+
+
+class SidebarToggleTest(unittest.TestCase):
+    def setUp(self):
+        d = Path(tempfile.mkdtemp())
+        (d / "sac.toml").write_text(VALID, encoding="utf-8")
+        self.cfg = load_config(d / "sac.toml")
+        self.store = Store(d)
+
+    def test_toggle_cria_quando_ausente(self):
+        from sac.commands import cmd_sidebar_toggle
+        r = FakeRunner(outputs={
+            "list-panes|-t": "%9||1\n%10||0\n",
+            "display-message": "100",
+        })
+        t = Tmux("sac-test", runner=r)
+        rc = cmd_sidebar_toggle(self.cfg, t, "@1")
+        self.assertEqual(rc, 0)
+        splits = [c for c in r.calls if c[1] == "split-window"]
+        self.assertEqual(len(splits), 1)
+        self.assertIn("-b", splits[0], "sidebar nasce à esquerda (before)")
+        self.assertIn("-f", splits[0], "sidebar full-height")
+        roles = [c for c in r.calls if c[1] == "set-option" and "@pane_role" in c]
+        self.assertEqual(len(roles), 1, "pane novo é marcado como sidebar")
+        sel = [c for c in r.calls if c[1] == "select-pane"]
+        self.assertEqual(sel[-1][-1], "%9", "foco volta ao pane original")
+
+    def test_toggle_mata_quando_presente(self):
+        from sac.commands import cmd_sidebar_toggle
+        r = FakeRunner(outputs={
+            "list-panes|-t": "%9|sidebar|0\n%10||1\n",
+        })
+        t = Tmux("sac-test", runner=r)
+        rc = cmd_sidebar_toggle(self.cfg, t, "@1")
+        self.assertEqual(rc, 0)
+        kills = [c for c in r.calls if c[1] == "kill-pane"]
+        self.assertEqual(len(kills), 1)
+        self.assertEqual(kills[0][kills[0].index("-t") + 1], "%9")
+        self.assertFalse([c for c in r.calls if c[1] == "split-window"],
+                         "não cria nada quando só remove")
+
+
+class AppearanceTest(unittest.TestCase):
+    def setUp(self):
+        d = Path(tempfile.mkdtemp())
+        (d / "sac.toml").write_text(GRID_VALID, encoding="utf-8")
+        self.root = d
+        self.cfg = load_config(d / "sac.toml")
+        self.store = Store(d)
+        self.runner = FakeRunner(outputs={"display-message": "100", ("rc", "has-session"): 1})
+        self.tmux = Tmux("sac-test", runner=self.runner)
+
+    def test_cor_estavel_por_agente(self):
+        from sac.commands import AGENT_PALETTE, agent_color
+        self.assertEqual(agent_color("dev-1"), agent_color("dev-1"),
+                         "mesmo nome → mesma cor em qualquer boot")
+        self.assertIn(agent_color("dev-1"), AGENT_PALETTE)
+
+    def test_up_configura_bordas_status_e_hooks(self):
+        from unittest.mock import patch
+        with patch("sac.commands._git_branch", return_value="main"):
+            rc = cmd_up(self.cfg, self.store, self.tmux, self.root, boot_wait=0)
+        self.assertEqual(rc, 0)
+        calls = self.runner.calls
+        setopts = [" ".join(c) for c in calls if c[1] == "set-option"]
+        self.assertTrue(any("pane-border-status" in s and "top" in s for s in setopts),
+                        "borda com status no topo")
+        self.assertTrue(any("pane-border-format" in s and "dev-1" in s for s in setopts),
+                        "borda com label do agente")
+        self.assertTrue(any("@agent_color" in s for s in setopts),
+                        "cor do agente gravada como pane option")
+        self.assertTrue(any(" @agent leader" in s for s in setopts) and
+                        any(" @agent dev-1" in s for s in setopts),
+                        "identidade estável @agent gravada como pane option")
+        right_full = next(s for s in setopts if "status-right" in s)
+        self.assertIn("@agent", right_full,
+                      "rodapé mostra @agent (imune à troca de pane_title pelo harness)")
+        self.assertTrue(any("status-left" in s and "main" in s for s in setopts),
+                        "status-left com branch git")
+        self.assertTrue(any("status-right" in s and "SAC" in s and "pane_title" in s
+                            for s in setopts),
+                        "status-right com agente focado e versão")
+        right = next(s for s in setopts if "status-right" in s)
+        self.assertNotIn("MouseDrag", right)
+        self.assertNotIn("S-C-v", right)
+        self.assertIn("#S:#W", right)
+        self.assertIn("sac status --mini", right)
+        self.assertTrue(any(c[1] == "set-option" and "window-status-format" in c and c[-1] == ""
+                            for c in calls),
+                        "lista de windows suprimida")
+        hooks = [" ".join(c) for c in calls if c[1] == "set-hook"]
+        self.assertTrue(any("after-select-pane" in h and "@agent_color" in h for h in hooks),
+                        "hook de realce do pane ativo")
+        self.assertTrue(any("client-resized" in h and "@pane_role" in h
+                            and "window_width" in h for h in hooks),
+                        "hook de resize do grid via @pane_role")
+        binds = [" ".join(c) for c in calls if c[1] == "bind-key"]
+        self.assertTrue(any("sidebar --toggle" in b for b in binds), "bind prefix+e")
+
+    def test_hook_resize_legado_intacto_sem_windows(self):
+        (self.root / "sac.toml").write_text(VALID, encoding="utf-8")
+        cfg = load_config(self.root / "sac.toml")
+        cmd_up(cfg, self.store, self.tmux, self.root, boot_wait=0)
+        hooks = [" ".join(c) for c in self.runner.calls if c[1] == "set-hook"]
+        self.assertTrue(any("client-resized" in h and "sac sidebar" in h for h in hooks),
+                        "hook legado (grep sac sidebar) preservado sem [windows]")
+        self.assertFalse(any("after-select-pane" in h for h in hooks) and
+                         any("client-resized" in h and "@pane_role" in h for h in hooks),
+                         "hook do grid não aparece no legado")
+
+
+class ProgressBarTest(unittest.TestCase):
+    def test_formato_barra(self):
+        from sac.commands import _Progress
+        p = _Progress(4, enabled=True)
+        line = p._line(2, "leader: prompt")
+        self.assertIn("\033[32m", line, "barra verde")
+        self.assertIn(" 50%", line)
+        self.assertEqual(line.count("█"), 10)
+        self.assertEqual(line.count("░"), 10)
+        cheio = p._line(4, "fim")
+        self.assertEqual(cheio.count("█"), 20)
+        self.assertIn("100%", cheio)
+        self.assertTrue(line.startswith("\r"), "reescreve a mesma linha")
+
+    def test_desabilitada_nao_imprime(self):
+        import io
+        from contextlib import redirect_stdout
+        from sac.commands import _Progress
+        p = _Progress(4, enabled=False)
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            p.step("x")
+            p.render(2, "y")
+            p.finish()
+        self.assertEqual(buf.getvalue(), "")
+
+
+class SidebarInteractTest(unittest.TestCase):
+    def setUp(self):
+        d = Path(tempfile.mkdtemp())
+        (d / "sac.toml").write_text(GRID_VALID, encoding="utf-8")
+        self.cfg = load_config(d / "sac.toml")
+        self.store = Store(d)
+        self.runner = FakeRunner(outputs={
+            "list-windows": "main|1\ntrabalho|0\n",
+            "list-panes|-s": "main|leader|1|%2\ntrabalho|dev-1|0|%4\ntrabalho|auditor|0|%5\n",
+        })
+        self.tmux = Tmux("sac-test", runner=self.runner)
+
+    def test_hit_map_window_e_agente(self):
+        from sac.commands import _render_sidebar
+        _text, hits = _render_sidebar(self.cfg, self.store, self.tmux)
+        self.assertEqual(hits[0], ("window", "main"))
+        self.assertEqual(hits[1], ("agent", "main", "%2"))
+        self.assertEqual(hits[2], ("window", "trabalho"))
+        self.assertEqual(hits[3], ("agent", "trabalho", "%4"))
+        self.assertEqual(hits[4], ("agent", "trabalho", "%5"))
+
+    def test_clique_em_agente_seleciona_window_e_pane(self):
+        from sac.commands import _handle_input, _render_sidebar
+        _text, hits = _render_sidebar(self.cfg, self.store, self.tmux)
+        novo_cursor = _handle_input("\033[<0;5;4M", hits, 0, self.tmux)
+        self.assertEqual(novo_cursor, 3)
+        sel = [c for c in self.runner.calls if c[1] in ("select-window", "select-pane")]
+        self.assertEqual(sel[0][-1], "sac-test:trabalho", "clique no agente abre a window do grupo")
+        self.assertEqual(sel[1][-1], "%4", "e foca o pane do agente clicado")
+
+    def test_teclas_j_k_enter(self):
+        from sac.commands import _handle_input
+        hits = {0: ("window", "main"), 1: ("agent", "main", "%2"),
+                2: ("window", "trabalho"), 3: ("agent", "trabalho", "%4")}
+        c = _handle_input("j", hits, 0, self.tmux)
+        self.assertEqual(c, 1)
+        c = _handle_input("k", hits, c, self.tmux)
+        self.assertEqual(c, 0)
+        _handle_input("\r", hits, 3, self.tmux)
+        sel = [c for c in self.runner.calls if c[1] == "select-pane"]
+        self.assertEqual(sel[-1][-1], "%4", "Enter ativa a linha do cursor")

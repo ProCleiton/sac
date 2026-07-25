@@ -1,5 +1,9 @@
 # SAC — Stupid Agentic Coordinator
 
+<p align="center">
+  <img src="assets/logo-sac.png" alt="SAC — Stupid Agentic Coordinator" width="360">
+</p>
+
 A lightweight multi-agent coordinator built on tmux. An optional polling daemon
 watches each agent's inbox and **injects tasks directly into the harness pane**
 — no need for agents to periodically check for new messages.
@@ -21,8 +25,11 @@ python3 -m unittest discover -s tests -v   # test suite
 sac init                                    # interactive wizard: creates sac.toml + prompts/ + .sac/
 sac up                                      # start the tmux session with agents
 sac status                                  # overview
+sac status --mini                           # one-line summary (2● 1!) for the tmux status bar
 sac status --clean                          # dry-run: list orphan inbox/claimed
 sac status --clean --yes                    # execute removal of orphan data
+sac sidebar --toggle                        # toggle the sidebar pane in the current window
+sac sidebar --watch                         # in-place live sidebar (used by the sidebar panes)
 sac send leader "implement X"               # task the leader
 sac send user "report"                      # message the human (read via sac log)
 sac run dev-review "feature Y"              # kick off a declared loop
@@ -32,11 +39,33 @@ sac kill <agent>                            # restart a stuck harness (re-inject
 sac notify --once                           # single re-poke sweep (legacy)
 sac log -f                                  # follow log.jsonl
 sac attach                                  # attach to the tmux session
-sac down                                    # stop the session
+sac down                                    # stop everything: harnesses, daemon and tmux session
 ```
 
 ## Concepts
 
+- **CCB-style layout (`[windows]`)**: group agents into named tmux windows with
+  a simple grammar — `,` stacks vertically, `;` splits side-by-side
+  (`trabalho = "dev-1,auditor"`). Every window gets a left sidebar; the dash
+  window is always created. Without `[windows]`, the legacy
+  one-window-per-agent layout is preserved.
+- **Sidebar v3**: live tree of windows → agents with `├─`/`└─` connectors,
+  per-agent model (from `--model` in args, e.g. `kimi/k3`), inbox badge `(N)`,
+  idle time (`· 5m`), state markers (`●` claimed, `!` escalated, `◐` inbox,
+  `·` idle, `*` focused), plus the last 5 comms events and tmux tips.
+  `sac sidebar --watch` redraws in place; `sac sidebar --toggle` (bind
+  `prefix+e`) opens/closes it in any window.
+- **Status bar**: mode (INPUT/KEY/COPY) + git branch on the left;
+  session:window, live agent summary (`#(sac status --mini)` → `2● 1!`),
+  focused agent, SAC version and date on the right.
+- **Stable agent identity**: harness panes are tagged with the `@agent` pane
+  option at boot — sidebar and status bar never rely on `pane_title`, which
+  harnesses overwrite seconds after boot (kimi → "Kimi Code").
+- **Full shutdown**: `sac down` kills every harness pane (in config order),
+  terminates the daemon via pid file (SIGTERM → SIGKILL, even detached) and
+  only then kills the tmux session.
+- **Boot progress bar**: `sac up` shows an animated 0–100% progress bar on
+  TTYs (falls back to plain log lines when piped).
 - **Daemon coordinator**: a lightweight polling daemon (`sac daemon`) monitors
   every agent's inbox (POLL_INTERVAL=1s). When a new message arrives, it injects
   the **body directly** into the agent's tmux pane via `send-keys` — no
