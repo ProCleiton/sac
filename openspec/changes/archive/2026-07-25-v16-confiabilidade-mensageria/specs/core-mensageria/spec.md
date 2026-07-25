@@ -1,6 +1,6 @@
-## MODIFIED Requirements
+## ADDED Requirements
 
-### Requirement: Armazenamento persistente de mensagens
+### Requirement: Raiz da fila determinada por SAC_ROOT
 O sistema SHALL armazenar mensagens como arquivos individuais no filesystem, com
 raiz da fila determinada por `SAC_ROOT` (env/--sac-root/config) com fallback para
 o diretório de trabalho corrente (`cwd / .sac`).
