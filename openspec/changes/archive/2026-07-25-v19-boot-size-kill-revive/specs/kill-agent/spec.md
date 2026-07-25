@@ -50,7 +50,7 @@ O sistema SHALL validar que o agente existe no config e a sessão está ativa an
 - **WHEN** `sac kill <agente>` sem sessão tmux ativa
 - **THEN** retorna erro "sessão não ativa" e exit 1
 
-#### Scenario: Pane não encontrado — revive
+#### Scenario: Pane não encontrado
 - **GIVEN** agente válido e sessão ativa
 - **WHEN** o pane do harness não é encontrado (ex.: processo do harness morreu e o pane fechou)
 - **THEN** o sistema executa o revive (recriação do harness na janela do agente) em vez de retornar erro

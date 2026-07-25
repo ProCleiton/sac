@@ -83,6 +83,10 @@ sac down                                    # stop everything: harnesses, daemon
   between pokes to the same message (base `poke_stale_after`, cap 5 min).
   The legacy `sac notify` applies the same backoff. Prevents poke storms
   during long-running tasks.
+- **Session environment**: every pane (harness, sidebar, dash) receives
+  `SAC_ROOT=<raiz do store>` and `SAC_CONFIG=<caminho absoluto do sac.toml>`.
+  The CLI honors `$SAC_CONFIG` as the default for `--config`, so `sac` commands
+  inside panes always resolve the correct session regardless of cwd.
 - **Boot progress & fail-fast**: `sac up` shows per-agent progress
   (`[3/8] agent: creating window... waiting 12s for prompt...`) with
   elapsed-time-aware waiting. Socket directory is auto-created. Critical
@@ -105,11 +109,15 @@ sac down                                    # stop everything: harnesses, daemon
 - **Configuration**: `sac.toml` declares exactly one leader, the auxiliaries and
   named loops. The session-level `boot_wait` (default 8s) controls how long
   `sac up` waits before injecting prompts — individual agents can override it
-  with `[[agents]] boot_wait = N`. Loops are not enforced — the workflow lives
-  in each agent's contract prompt (`prompts/`).
+  with `[[agents]] boot_wait = N`. Session geometry is set via `[session]
+  width`/`height` (default 220x50) — avoids SIGILL in narrow panes at boot.
+  Loops are not enforced — the workflow lives in each agent's contract prompt
+  (`prompts/`).
 - **Harness recovery**: `sac kill <agent>` restarts a stuck harness in-place —
   kills the process, recreates the pane from the sidebar, re-injects the prompt
-  file, and re-alerts any pending claimed tasks.
+  file, and re-alerts any pending claimed tasks. If the pane is already dead
+  (process gone), `sac kill` revives it from scratch — no need for a full
+  `down`/`up` cycle.
 - **Orphan cleanup**: `sac status --clean` runs a dry-run by default (lists
   orphans without removing). Add `--yes` to execute: removes inbox and claimed
   directories for agents no longer declared in `sac.toml` (preserves `done/`
