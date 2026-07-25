@@ -125,6 +125,20 @@ class InitTest(unittest.TestCase):
         note = _harness_note(cfg, a)
         self.assertEqual(note, OPENCODE_NOTE)
 
+    def test_templates_agnosticos_sem_referencias_de_ambiente(self):
+        # SAC é gerenciador de harness agnóstico: templates e exemplos gerados
+        # não podem mencionar aliases/modelos de nenhum ambiente específico
+        from sac.init import KIMI_NOTE, OPENCODE_NOTE, PROMPT_TEMPLATES
+        import inspect
+        import sac.init as init_mod
+        fonte = inspect.getsource(init_mod)
+        for ref in ("esteira/", "deepseek", "DeepSeek", "/home/"):
+            self.assertNotIn(ref, KIMI_NOTE, f"KIMI_NOTE com referência de ambiente: {ref}")
+            self.assertNotIn(ref, OPENCODE_NOTE, f"OPENCODE_NOTE com referência de ambiente: {ref}")
+            self.assertNotIn(ref, PROMPT_TEMPLATES["leader"])
+            self.assertNotIn(ref, PROMPT_TEMPLATES["aux"])
+        self.assertNotIn("esteira/", fonte, "init.py (incl. exemplos do questionário) deve ser agnóstico")
+
     def test_init_args_separate_entries(self):
         inputs = [
             "test", "", "5", "1",

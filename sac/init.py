@@ -52,12 +52,12 @@ Você é um auxiliar da esteira SAC. Tarefas chegam automaticamente.
 {harness_note}
 """
 
-KIMI_NOTE = """- Kimi K3: respostas longas e analíticas.
-- Use `--model esteira/k3` para o modelo mais capaz.
+KIMI_NOTE = """- Kimi Code: respostas longas e analíticas.
+- O modelo é o que você configurou nos args do agente (ex.: `--model <alias/modelo>`).
 - Saídas muito longas podem ser colapsadas pela TUI (`Ctrl+O` para expandir).
 """
 
-OPENCODE_NOTE = """- opencode DeepSeek V4 Flash: respostas diretas e código.
+OPENCODE_NOTE = """- opencode: respostas diretas e código.
 - Use `--auto` para aprovação automática de comandos shell seguros.
 - Prefira `ask` para consultas e `edit/write` para alterações.
 """
@@ -113,7 +113,7 @@ def _collect_config(stdin, stdout) -> Config:
         command = _ask("Comando (kimi/opencode)", "kimi" if i == 0 else "opencode", stdin, stdout)
         role = "leader" if i == 0 else _ask("Papel (leader/aux)", "aux", stdin, stdout,
                                             validate=lambda v: v in ("leader", "aux"))
-        model = _ask("Modelo (ex.: esteira/k3, opencode-go/deepseek-v4-flash)", "", stdin, stdout)
+        model = _ask("Modelo (opcional — ex.: k3; vazio = não passar --model)", "", stdin, stdout)
         args = ["--model", model] if model else []
         if command == "opencode":
             args.append("--auto")

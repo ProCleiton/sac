@@ -59,6 +59,16 @@ class TmuxTest(unittest.TestCase):
             ("tmux", "new-session", "-d", "-s", "sac", "-n", "leader", "-P", "-F", "#{pane_id}", "env SAC_AGENT=leader kimi --model k3"),
         )
 
+    def test_new_session_with_size(self):
+        r = FakeRunner()
+        t = Tmux("sac", runner=r)
+        t.new_session("leader", ["kimi"], width=220, height=50)
+        self.assertEqual(
+            r.calls[0],
+            ("tmux", "new-session", "-d", "-s", "sac", "-n", "leader",
+             "-x", "220", "-y", "50", "-P", "-F", "#{pane_id}", "kimi"),
+        )
+
     def test_new_window_returns_pane_id(self):
         r = FakeRunner()
         t = Tmux("sac", runner=r)

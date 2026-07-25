@@ -117,24 +117,48 @@ def extract_reply(pane_text: str) -> tuple[bool, str]:
     return True, pane_text[:idx].rstrip("\n")
 
 
+def _agent_window(cfg: Config, agent_name: str) -> str:
+    """Janela onde o agente vive: legado = nome do agente; grid = janela da gramática [windows]."""
+    if not cfg.windows:
+        return agent_name
+    from .layout import build_plan
+    for wplan in build_plan(cfg.windows):
+        if any(op.agent == agent_name for op in wplan.ops):
+            return wplan.name
+    return agent_name
+
+
+def _session_env(store: Store, config_path: Path | None, agent: str | None = None) -> dict[str, str]:
+    """Env de sessão exportada aos panes: comandos `sac` resolvem a sessão certa de qualquer cwd."""
+    env = {}
+    if agent:
+        env["SAC_AGENT"] = agent
+    env["SAC_ROOT"] = str(store.root.parent)
+    if config_path:
+        env["SAC_CONFIG"] = str(config_path)
+    return env
+
+
 def cmd_kill(cfg: Config, store: Store, tmux: Tmux, project_root: Path | None,
-             agent_name: str, boot_wait: float | None = None) -> int:
+             agent_name: str, boot_wait: float | None = None,
+             config_path: Path | None = None) -> int:
     cfg.agent(agent_name)
     if not tmux.has_session():
         print("erro: nenhuma sessão ativa", file=sys.stderr)
         return 1
     pid = tmux.find_pane_id(agent_name)
-    if not pid:
-        print(f"erro: pane do agente '{agent_name}' não encontrado", file=sys.stderr)
-        return 1
-    sidebar_id = tmux.find_pane_by_command("sac sidebar", window=agent_name)
+    window = _agent_window(cfg, agent_name)
+    sidebar_id = tmux.find_pane_by_command("sac sidebar", window=window)
     if not sidebar_id:
-        print(f"erro: sidebar não encontrada na janela do agente '{agent_name}'", file=sys.stderr)
+        print(f"erro: sidebar não encontrada na janela '{window}' do agente '{agent_name}'", file=sys.stderr)
         return 1
-    tmux.kill_pane(pid)
+    revive = pid is None
+    if pid:
+        tmux.kill_pane(pid)
     agent = cfg.agent(agent_name)
+    _cfg_path = config_path or (project_root / "sac.toml" if project_root else None)
     harness_id = tmux.split_window(sidebar_id, [agent.command, *agent.args],
-                                    env={"SAC_AGENT": agent.name})
+                                    env=_session_env(store, _cfg_path, agent.name), full=revive)
     tmux.resize_pane(sidebar_id, SIDEBAR_WIDTH)
     tmux.set_pane_title(harness_id, agent.name)
     tmux.set_pane_option(harness_id, "@agent", agent.name)
@@ -148,8 +172,8 @@ def cmd_kill(cfg: Config, store: Store, tmux: Tmux, project_root: Path | None,
         time.sleep(0.5)
         tmux.paste(harness_id, f"SAC: tarefa {claimed[0]} pendente — rode `sac done {claimed[0]}`")
         tmux.press_enter(harness_id)
-    store.log("kill", agent=agent_name)
-    print(f"ok: harness do '{agent_name}' reiniciado")
+    store.log("kill", agent=agent_name, revive=revive)
+    print(f"ok: harness do '{agent_name}' {'revivido' if revive else 'reiniciado'}")
     return 0
 
 
@@ -487,7 +511,8 @@ def cmd_sidebar_toggle(cfg: Config, tmux: Tmux, window: str | None) -> int:
 
 
 def cmd_up(cfg: Config, store: Store, tmux: Tmux, project_root: Path,
-           boot_wait: float | None = None, stdout: Callable[..., None] | None = None) -> int:
+           boot_wait: float | None = None, stdout: Callable[..., None] | None = None,
+           config_path: Path | None = None) -> int:
     if cfg.socket:
         Path(cfg.socket).parent.mkdir(parents=True, exist_ok=True)
     if tmux.has_session():
@@ -498,6 +523,7 @@ def cmd_up(cfg: Config, store: Store, tmux: Tmux, project_root: Path,
     total = len(agents)
     use_bar = stdout is None and sys.stdout.isatty()
     prog = _Progress(total * 2 + 1, enabled=use_bar)
+    env_base = _session_env(store, config_path or (project_root / "sac.toml"))
 
     def _notify(label: str) -> None:
         if use_bar:
@@ -506,10 +532,10 @@ def cmd_up(cfg: Config, store: Store, tmux: Tmux, project_root: Path,
             _out(label)
 
     if cfg.windows:
-        harness_ids = _materialize_grid(cfg, tmux, _notify)
+        harness_ids = _materialize_grid(cfg, tmux, _notify, env_base)
         entry_window = next(iter(cfg.windows))
     else:
-        harness_ids = _materialize_legacy(cfg, tmux, agents, _notify)
+        harness_ids = _materialize_legacy(cfg, tmux, agents, _notify, env_base)
         entry_window = agents[0].name
     # aterrissar na entry window (leader)
     leader_name = agents[0].name
@@ -551,34 +577,37 @@ def cmd_up(cfg: Config, store: Store, tmux: Tmux, project_root: Path,
     return 0
 
 
-def _materialize_legacy(cfg: Config, tmux: Tmux, agents, _out) -> dict[str, str]:
+def _materialize_legacy(cfg: Config, tmux: Tmux, agents, _out,
+                        env_base: dict[str, str] | None = None) -> dict[str, str]:
     harness_ids = {}
     first = True
     total = len(agents)
     for idx, agent in enumerate(agents, 1):
         _out(f"[{idx}/{total}] {agent.name}: criando janela...")
         if first:
-            sidebar_id = tmux.new_session(agent.name, SIDEBAR_CMD)
+            sidebar_id = tmux.new_session(agent.name, SIDEBAR_CMD, env=env_base,
+                                          width=cfg.session_width, height=cfg.session_height)
             first = False
         else:
-            sidebar_id = tmux.new_window(agent.name, SIDEBAR_CMD)
+            sidebar_id = tmux.new_window(agent.name, SIDEBAR_CMD, env=env_base)
         _mark_sidebar_pane(tmux, sidebar_id)
         harness_id = tmux.split_window(sidebar_id, [agent.command, *agent.args],
-                                        env={"SAC_AGENT": agent.name})
+                                        env={**env_base, "SAC_AGENT": agent.name} if env_base else {"SAC_AGENT": agent.name})
         tmux.resize_pane(sidebar_id, SIDEBAR_WIDTH)
         tmux.set_pane_title(harness_id, agent.name)
         tmux.set_pane_option(harness_id, "@agent", agent.name)
         harness_ids[agent.name] = harness_id
-    _materialize_dash(tmux, _out, total)
+    _materialize_dash(tmux, _out, total, env_base)
     return harness_ids
 
 
-def _materialize_dash(tmux: Tmux, _out, total: int) -> None:
+def _materialize_dash(tmux: Tmux, _out, total: int,
+                      env_base: dict[str, str] | None = None) -> None:
     _out(f"[{total+1}/{total+1}] dash: criando dashboard...")
-    d_side = tmux.new_window("dash", SIDEBAR_CMD)
+    d_side = tmux.new_window("dash", SIDEBAR_CMD, env=env_base)
     _mark_sidebar_pane(tmux, d_side)
-    d_log = tmux.split_window(d_side, DASH_LOG_CMD)
-    tmux.split_window(d_log, DASH_NOTIFY_CMD, vertical=True)
+    d_log = tmux.split_window(d_side, DASH_LOG_CMD, env=env_base)
+    tmux.split_window(d_log, DASH_NOTIFY_CMD, vertical=True, env=env_base)
     tmux.resize_pane(d_side, SIDEBAR_WIDTH)
 
 
@@ -684,7 +713,8 @@ def _sidebar_cols(tmux: Tmux, target: str) -> int:
     return max(SIDEBAR_MIN_COLS, round(_int(out, 0) * SIDEBAR_PCT / 100))
 
 
-def _materialize_grid(cfg: Config, tmux: Tmux, _out) -> dict[str, str]:
+def _materialize_grid(cfg: Config, tmux: Tmux, _out,
+                      env_base: dict[str, str] | None = None) -> dict[str, str]:
     from .layout import build_plan
     plans = build_plan(cfg.windows)
     agents_by_name = {a.name: a for a in cfg.agents}
@@ -693,10 +723,11 @@ def _materialize_grid(cfg: Config, tmux: Tmux, _out) -> dict[str, str]:
     first = True
     for wplan in plans:
         if first:
-            sidebar_id = tmux.new_session(wplan.name, SIDEBAR_CMD)
+            sidebar_id = tmux.new_session(wplan.name, SIDEBAR_CMD, env=env_base,
+                                          width=cfg.session_width, height=cfg.session_height)
             first = False
         else:
-            sidebar_id = tmux.new_window(wplan.name, SIDEBAR_CMD)
+            sidebar_id = tmux.new_window(wplan.name, SIDEBAR_CMD, env=env_base)
         _mark_sidebar_pane(tmux, sidebar_id)
         side = _sidebar_cols(tmux, sidebar_id)
         win_w = _int(tmux._run("display-message", "-p", "-t", sidebar_id,
@@ -717,7 +748,7 @@ def _materialize_grid(cfg: Config, tmux: Tmux, _out) -> dict[str, str]:
                 agent = agents_by_name[agent_name]
                 _out(f"{agent.name}: criando pane...")
                 cmd = [agent.command, *agent.args]
-                env = {"SAC_AGENT": agent.name}
+                env = {**env_base, "SAC_AGENT": agent.name} if env_base else {"SAC_AGENT": agent.name}
                 if ri == 0:
                     if ci == 0:
                         pid = tmux.split_window(sidebar_id, cmd, env=env, lines=widths[0])
@@ -737,7 +768,7 @@ def _materialize_grid(cfg: Config, tmux: Tmux, _out) -> dict[str, str]:
                 harness_ids[agent.name] = pid
                 prev_leaf = pid
         tmux.resize_pane(sidebar_id, side)
-    _materialize_dash(tmux, _out, total)
+    _materialize_dash(tmux, _out, total, env_base)
     return harness_ids
 
 
