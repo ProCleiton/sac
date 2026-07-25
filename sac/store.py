@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
 from dataclasses import dataclass
 from datetime import datetime
@@ -23,8 +24,18 @@ class Message:
 
 
 class Store:
-    def __init__(self, root: Path):
-        self.root = Path(root)
+    def __init__(self, root: Path | None = None):
+        if root is not None:
+            self.root = Path(root) / ".sac"
+        else:
+            self.root = self._resolve_root()
+
+    @staticmethod
+    def _resolve_root() -> Path:
+        env_root = os.environ.get("SAC_ROOT")
+        if env_root:
+            return Path(env_root) / ".sac"
+        return Path.cwd() / ".sac"
 
     def _dir(self, kind: str, agent: str) -> Path:
         p = self.root / kind / agent
@@ -78,12 +89,36 @@ class Store:
         self.log("next", agent=agent, id=msg.id)
         return msg
 
-    def done(self, agent: str, msg_id: str, summary: str, now: datetime | None = None) -> None:
+    def done(self, agent: str, msg_id: str, summary: str, now: datetime | None = None) -> bool:
         src = self.root / "claimed" / agent / f"{msg_id}.msg"
         if not src.is_file():
             raise StoreError(f"mensagem não está claimed para {agent}: {msg_id}")
-        src.rename(self._dir("done", agent) / src.name)
-        self.log("done", now=now, agent=agent, id=msg_id, summary=summary)
+        self._log_done(agent, msg_id, summary, now=now)
+        dst = self._dir("done", agent) / src.name
+        try:
+            shutil.move(str(src), str(dst))
+        except OSError as e:
+            self.log("loop_error", error=f"finish_move_failed: {e}", agent=agent, id=msg_id)
+            return False
+        if src.exists():
+            self.log("loop_error", error=f"finish_move_orphan: src still exists after move", agent=agent, id=msg_id)
+            return False
+        return True
+
+    def _log_done(self, agent: str, msg_id: str, summary: str, now: datetime | None = None) -> None:
+        now = now or datetime.now()
+        line = json.dumps({
+            "ts": now.isoformat(),
+            "event": "done",
+            "agent": agent,
+            "id": msg_id,
+            "summary": summary,
+        }, ensure_ascii=False)
+        path = self.root / "log.jsonl"
+        with path.open("a", encoding="utf-8") as f:
+            f.write(line + "\n")
+            f.flush()
+            os.fsync(f.fileno())
 
     def finish_reply(self, agent: str, msg_id: str) -> None:
         src = self.root / "claimed" / agent / f"{msg_id}.msg"
@@ -115,6 +150,33 @@ class Store:
 
     def claimed(self, agent: str) -> list[str]:
         return self._ids("claimed", agent)
+
+    def inbox_count(self, agent: str) -> int:
+        return len(self._ids("inbox", agent))
+
+    def last_event_age(self, agent: str, now: datetime | None = None) -> float | None:
+        """Segundos desde o último evento do agente no log.jsonl (None se não houver)."""
+        now = now or datetime.now()
+        path = self.root / "log.jsonl"
+        if not path.is_file():
+            return None
+        last: datetime | None = None
+        for line in path.read_text(encoding="utf-8").splitlines():
+            try:
+                ev = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if ev.get("agent") != agent and ev.get("sender") != agent:
+                continue
+            try:
+                ts = datetime.fromisoformat(str(ev.get("ts", "")))
+            except ValueError:
+                continue
+            if last is None or ts > last:
+                last = ts
+        if last is None:
+            return None
+        return (now - last).total_seconds()
 
     def clean_orphans(self, valid_agents: list[str], dry_run: bool = False) -> dict[str, int]:
         valid = set(valid_agents)
@@ -155,5 +217,6 @@ class Store:
     def log(self, event: str, now: datetime | None = None, **fields) -> None:
         now = now or datetime.now()
         line = json.dumps({"ts": now.isoformat(), "event": event, **fields}, ensure_ascii=False)
+        self.root.mkdir(parents=True, exist_ok=True)
         with (self.root / "log.jsonl").open("a", encoding="utf-8") as f:
             f.write(line + "\n")

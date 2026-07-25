@@ -74,7 +74,7 @@ class IntegrationTest(unittest.TestCase):
         # send persiste mensagem e cutuca o pane com "sac next"
         self.assertEqual(main(["--config", self.cfg, "send", "dev-1", "echo oi"]), 0)
         from sac.store import Store
-        store = Store(self.d / ".sac")
+        store = Store(self.d)
         self.assertEqual(len(store.pending("dev-1")), 1)
         time.sleep(1)
         # Captura o pane do dev-1 via SAC_AGENT
@@ -106,3 +106,85 @@ class IntegrationTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+GRID = """
+[session]
+name = "sac-itest-grid"
+
+[[agents]]
+name = "leader"
+command = "bash"
+role = "leader"
+
+[[agents]]
+name = "dev-1"
+command = "bash"
+role = "aux"
+
+[[agents]]
+name = "auditor"
+command = "bash"
+role = "aux"
+
+[windows]
+main = "leader"
+trabalho = "dev-1,auditor"
+"""
+
+
+@unittest.skipUnless(TMUX, "tmux não disponível")
+class GridIntegrationTest(unittest.TestCase):
+    def setUp(self):
+        self.d = Path(tempfile.mkdtemp())
+        (self.d / "sac.toml").write_text(GRID, encoding="utf-8")
+        self.cfg = str(self.d / "sac.toml")
+        subprocess.run(["tmux", "kill-session", "-t", "sac-itest-grid"],
+                       capture_output=True)
+
+    def tearDown(self):
+        subprocess.run(["tmux", "kill-session", "-t", "sac-itest-grid"],
+                       capture_output=True)
+
+    def test_grid_up_layout_e_sidebar_v2(self):
+        self.assertEqual(main(["--config", self.cfg, "up"]), 0)
+        time.sleep(1)
+        wins = subprocess.run(["tmux", "list-windows", "-t", "sac-itest-grid",
+                               "-F", "#{window_name}"],
+                              capture_output=True, text=True).stdout.split()
+        self.assertEqual(wins, ["main", "trabalho", "dash"],
+                         f"windows na ordem do spec + dash: {wins}")
+        panes = subprocess.run(["tmux", "list-panes", "-t", "sac-itest-grid:trabalho",
+                                "-F", "#{pane_title}"],
+                               capture_output=True, text=True).stdout.split()
+        self.assertEqual(len(panes), 3, f"trabalho = sidebar + dev-1 + auditor: {panes}")
+        self.assertIn("dev-1", panes)
+        self.assertIn("auditor", panes)
+        roles = subprocess.run(["tmux", "list-panes", "-s", "-t", "sac-itest-grid",
+                                "-F", "#{@pane_role}"],
+                               capture_output=True, text=True).stdout.split()
+        self.assertEqual(roles.count("sidebar"), 3,
+                         f"3 sidebars marcadas com @pane_role: {roles}")
+        border = subprocess.run(["tmux", "show-option", "-t", "sac-itest-grid",
+                                 "-v", "pane-border-status"],
+                                capture_output=True, text=True).stdout.strip()
+        self.assertEqual(border, "top", "borda com status no topo")
+        active = subprocess.run(["tmux", "display-message", "-p", "-t", "sac-itest-grid",
+                                 "#{window_name}"],
+                                capture_output=True, text=True).stdout.strip()
+        self.assertEqual(active, "main", f"attach na entry window: {active}")
+        # sidebar v2 renderiza tree/comms/tips contra a sessão real
+        import io
+        from contextlib import redirect_stdout
+        from sac.commands import cmd_sidebar
+        from sac.config import load_config
+        from sac.store import Store
+        from sac.tmux import Tmux
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            rc = cmd_sidebar(load_config(self.d / "sac.toml"), Store(self.d),
+                             Tmux("sac-itest-grid"))
+        self.assertEqual(rc, 0)
+        out = buf.getvalue()
+        for trecho in ("> main", "leader", "dev-1", "comms", "tips"):
+            self.assertIn(trecho, out, f"'{trecho}' ausente na sidebar v2: {out}")
+        self.assertEqual(main(["--config", self.cfg, "down"]), 0)

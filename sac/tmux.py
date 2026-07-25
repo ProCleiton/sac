@@ -69,13 +69,26 @@ class Tmux:
                           *self._pane_id(), cmd).stdout.strip()
 
     def split_window(self, target: str, command: list[str], vertical: bool = False,
-                     env: dict[str, str] | None = None) -> str:
+                     env: dict[str, str] | None = None, pct: int | None = None,
+                     full: bool = False, before: bool = False,
+                     lines: int | None = None) -> str:
         cmd = shlex.join(command)
         if env:
             prefix = " ".join(f"{k}={shlex.quote(v)}" for k, v in env.items())
             cmd = f"env {prefix} {cmd}"
-        return self.check("split-window", "-t", self._ptarget(target),
-                          "-v" if vertical else "-h", *self._pane_id(), cmd).stdout.strip()
+        args = ["split-window", "-t", self._ptarget(target), "-v" if vertical else "-h"]
+        if before:
+            args.append("-b")
+        if full:
+            args.append("-f")
+        if lines is not None:
+            args += ["-l", str(lines)]
+        elif pct is not None:
+            args += ["-p", str(pct)]
+        return self.check(*args, *self._pane_id(), cmd).stdout.strip()
+
+    def set_pane_option(self, target: str, name: str, value: str) -> None:
+        self._run("set-option", "-p", "-t", self._ptarget(target), name, value)
 
     def resize_pane(self, target: str, width: int) -> None:
         self._run("resize-pane", "-t", self._ptarget(target), "-x", str(width))
@@ -99,6 +112,8 @@ class Tmux:
         out = self._run("list-panes", "-s", "-t", self.session, "-F",
                          "#{pane_id}|#{pane_start_command}").stdout
         for line in out.splitlines():
+            if "|" not in line:
+                continue
             pid, cmd = line.split("|", 1)
             if f"SAC_AGENT={name}" in cmd:
                 return pid
@@ -120,10 +135,16 @@ class Tmux:
         self._run("send-keys", "-t", self._ptarget(target), "Enter")
 
     SUBMIT_DELAY_S = 0.5
+    POKE_DELAY_S = 0.2
 
     def send_keys(self, target: str, text: str) -> None:
         self._run("send-keys", "-t", self._ptarget(target), "-l", "--", text)
         time.sleep(self.SUBMIT_DELAY_S)
+        self._run("send-keys", "-t", self._ptarget(target), "Enter")
+
+    def poke_with_enter(self, target: str, body: str) -> None:
+        self._run("send-keys", "-t", self._ptarget(target), "-l", "--", body)
+        time.sleep(self.POKE_DELAY_S)
         self._run("send-keys", "-t", self._ptarget(target), "Enter")
 
     def capture_pane(self, target: str, lines: int = 200) -> str:

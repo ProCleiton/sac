@@ -131,3 +131,104 @@ class SocketConfigTest(unittest.TestCase):
         p = Path(d) / "sac.toml"
         p.write_text(VALID, encoding="utf-8")
         self.assertIsNone(load_config(p).socket)
+
+
+class SessionRootTest(unittest.TestCase):
+    def _load(self, text):
+        d = tempfile.mkdtemp()
+        p = Path(d) / "sac.toml"
+        p.write_text(text, encoding="utf-8")
+        return load_config(p)
+
+    def test_session_root_parsed(self):
+        text = VALID.replace('name = "sac-test"', 'name = "sac-test"\nroot = "/custom/path"')
+        cfg = self._load(text)
+        self.assertEqual(cfg.root, "/custom/path")
+
+    def test_session_root_relative_rejected(self):
+        text = VALID.replace('name = "sac-test"', 'name = "sac-test"\nroot = "relative/path"')
+        with self.assertRaises(ConfigError):
+            self._load(text)
+
+    def test_session_root_default_none(self):
+        cfg = self._load(VALID)
+        self.assertIsNone(cfg.root)
+
+
+class PokeEscalateAfterTest(unittest.TestCase):
+    def _load(self, text):
+        d = tempfile.mkdtemp()
+        p = Path(d) / "sac.toml"
+        p.write_text(text, encoding="utf-8")
+        return load_config(p)
+
+    def test_default_3(self):
+        cfg = self._load(VALID)
+        self.assertEqual(cfg.poke_escalate_after, 3, "default deve ser 3")
+
+    def test_from_toml(self):
+        text = VALID.replace("poke_stale_after = 120",
+                             "poke_stale_after = 120\npoke_escalate_after = 5")
+        cfg = self._load(text)
+        self.assertEqual(cfg.poke_escalate_after, 5)
+
+    def test_rejects_less_than_1(self):
+        text = VALID.replace("poke_stale_after = 120",
+                             "poke_stale_after = 120\npoke_escalate_after = 0")
+        with self.assertRaises(ConfigError):
+            self._load(text)
+
+
+WINDOWS_VALID = """
+[session]
+name = "sac-test"
+
+[[agents]]
+name = "leader"
+command = "kimi"
+role = "leader"
+
+[[agents]]
+name = "dev-1"
+command = "opencode"
+
+[[agents]]
+name = "auditor"
+command = "kimi"
+
+[windows]
+main = "leader"
+trabalho = "dev-1,auditor"
+"""
+
+
+class WindowsConfigTest(unittest.TestCase):
+    def _load(self, text):
+        d = tempfile.mkdtemp()
+        p = Path(d) / "sac.toml"
+        p.write_text(text, encoding="utf-8")
+        return load_config(p)
+
+    def test_windows_valido_ordem_preservada(self):
+        cfg = self._load(WINDOWS_VALID)
+        self.assertEqual(list(cfg.windows), ["main", "trabalho"])
+        self.assertEqual(cfg.windows["trabalho"], "dev-1,auditor")
+
+    def test_windows_ausente_vazio(self):
+        cfg = self._load(VALID)
+        self.assertEqual(cfg.windows, {})
+
+    def test_windows_agente_desconhecido(self):
+        with self.assertRaises(ConfigError):
+            self._load(WINDOWS_VALID.replace('trabalho = "dev-1,auditor"',
+                                             'trabalho = "dev-1,fantasma"'))
+
+    def test_windows_agente_duplicado(self):
+        with self.assertRaises(ConfigError):
+            self._load(WINDOWS_VALID.replace('trabalho = "dev-1,auditor"',
+                                             'trabalho = "leader,dev-1,auditor"'))
+
+    def test_windows_agente_ausente_dos_specs(self):
+        with self.assertRaises(ConfigError):
+            self._load(WINDOWS_VALID.replace('trabalho = "dev-1,auditor"',
+                                             'trabalho = "dev-1"'))
