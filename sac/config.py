@@ -34,6 +34,8 @@ class Config:
     poke_stale_after: int = 120
     poke_escalate_after: int = 3
     boot_wait: int = 8
+    session_width: int = 220
+    session_height: int = 50
     socket: str | None = None
     root: str | None = None
     windows: dict[str, str] = field(default_factory=dict)
@@ -126,12 +128,20 @@ def load_config(path: Path) -> Config:
     if poke_escalate_after < 1:
         raise ConfigError(f"session.poke_escalate_after deve ser >= 1: {poke_escalate_after}")
 
+    def _session_size(key: str, default: int) -> int:
+        v = session.get(key, default)
+        if not isinstance(v, int) or isinstance(v, bool) or v < 1:
+            raise ConfigError(f"session.{key} deve ser inteiro positivo: {v}")
+        return v
+
     return Config(
         session_name=session.get("name", "sac"),
         notify_interval=int(session.get("notify_interval", 30)),
         poke_stale_after=int(session.get("poke_stale_after", 120)),
         poke_escalate_after=poke_escalate_after,
         boot_wait=int(session.get("boot_wait", 8)),
+        session_width=_session_size("width", 220),
+        session_height=_session_size("height", 50),
         socket=(str(Path(session["socket"]).expanduser()) if session.get("socket") else None),
         root=session_root,
         windows=windows,

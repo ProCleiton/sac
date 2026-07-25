@@ -52,13 +52,17 @@ class Tmux:
     def _pane_id(self) -> list[str]:
         return ["-P", "-F", "#{pane_id}"]
 
-    def new_session(self, window: str, command: list[str], env: dict[str, str] | None = None) -> str:
+    def new_session(self, window: str, command: list[str], env: dict[str, str] | None = None,
+                    width: int | None = None, height: int | None = None) -> str:
         cmd = shlex.join(command)
         if env:
             prefix = " ".join(f"{k}={shlex.quote(v)}" for k, v in env.items())
             cmd = f"env {prefix} {cmd}"
+        size = []
+        if width is not None and height is not None:
+            size = ["-x", str(width), "-y", str(height)]
         return self.check("new-session", "-d", "-s", self.session, "-n", window,
-                          *self._pane_id(), cmd).stdout.strip()
+                          *size, *self._pane_id(), cmd).stdout.strip()
 
     def new_window(self, name: str, command: list[str], env: dict[str, str] | None = None) -> str:
         cmd = shlex.join(command)
@@ -161,6 +165,8 @@ class Tmux:
             out = self._run("list-panes", "-s", "-t", self.session, "-F",
                              "#{pane_id}|#{pane_start_command}").stdout
         for line in out.splitlines():
+            if "|" not in line:
+                continue
             pid, cmd = line.split("|", 1)
             if substring in cmd:
                 return pid

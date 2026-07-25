@@ -32,6 +32,12 @@ role = "aux"
 prompt_file = "prompts/dev.md"
 """
 
+GRID_VALID = VALID + """
+[windows]
+main = "leader"
+trabalho = "dev-1"
+"""
+
 
 class CommandsTest(unittest.TestCase):
     def setUp(self):
@@ -273,6 +279,31 @@ class UpDownStatusTest(unittest.TestCase):
         t = Tmux("sac-test", runner=FakeRunner(rc=0))
         rc = cmd_up(self.cfg, self.store, t, self.root, boot_wait=0)
         self.assertEqual(rc, 0)
+
+    def test_up_creates_session_with_explicit_size(self):
+        rc = cmd_up(self.cfg, self.store, self.tmux, self.root, boot_wait=0)
+        self.assertEqual(rc, 0)
+        ns_idx = next(i for i, c in enumerate(self.runner.calls) if c[1] == "new-session")
+        ns = self.runner.calls[ns_idx]
+        self.assertIn("-x", ns)
+        self.assertEqual(ns[ns.index("-x") + 1], "220", "default de width é 220")
+        self.assertEqual(ns[ns.index("-y") + 1], "50", "default de height é 50")
+
+    def test_up_exporta_env_de_sessao_nos_panes(self):
+        rc = cmd_up(self.cfg, self.store, self.tmux, self.root, boot_wait=0)
+        self.assertEqual(rc, 0)
+        # sidebar (new-session) recebe SAC_ROOT + SAC_CONFIG (sem SAC_AGENT)
+        ns_idx = next(i for i, c in enumerate(self.runner.calls) if c[1] == "new-session")
+        ns = str(self.runner.calls[ns_idx])
+        self.assertIn("SAC_ROOT=", ns)
+        self.assertIn("SAC_CONFIG=", ns)
+        self.assertNotIn("SAC_AGENT", ns)
+        # harness (split-window) recebe SAC_AGENT + SAC_ROOT + SAC_CONFIG
+        sp_idx = next(i for i, c in enumerate(self.runner.calls) if c[1] == "split-window")
+        sp = str(self.runner.calls[sp_idx])
+        self.assertIn("SAC_AGENT=leader", sp)
+        self.assertIn("SAC_ROOT=", sp)
+        self.assertIn("SAC_CONFIG=", sp)
 
     def test_down_kills_existing_session(self):
         t = Tmux("sac-test", runner=FakeRunner(rc=0))
@@ -518,11 +549,53 @@ class KillTest(unittest.TestCase):
         rc = cmd_kill(self.cfg, self.store, t, self.root, "leader")
         self.assertEqual(rc, 1)
 
-    def test_cmd_kill_no_pane(self):
+    def test_cmd_kill_no_pane_revive_legado(self):
+        # Pane do harness morreu (ex.: crash) mas a sidebar/janela existe → revive
         r = FakeRunner(outputs={"list-panes": "%1|sac sidebar\n"})
         t = Tmux("sac-test", runner=r)
-        rc = cmd_kill(self.cfg, self.store, t, self.root, "dev-1")
+        rc = cmd_kill(self.cfg, self.store, t, self.root, "dev-1", boot_wait=0)
+        self.assertEqual(rc, 0)
+        self.assertFalse(any(c[1] == "kill-pane" for c in r.calls),
+                         "revive não deve matar pane (já está morto)")
+        split_calls = [c for c in r.calls if c[1] == "split-window"]
+        self.assertEqual(len(split_calls), 1, "revive deve recriar o harness")
+        self.assertIn("SAC_AGENT=dev-1", str(split_calls[0]))
+        self.assertIn("-f", split_calls[0], "revive usa split full-width")
+        paste_calls = [c for c in r.calls if c[1] == "paste-buffer"]
+        self.assertEqual(len(paste_calls), 1, "revive deve injetar o prompt")
+        log = (self.store.root / "log.jsonl").read_text(encoding="utf-8")
+        self.assertIn('"revive": true', log)
+
+    def test_cmd_kill_no_pane_no_sidebar_erro(self):
+        # Pane do harness E sidebar/janela inexistentes → erro
+        r = FakeRunner(outputs={"list-panes": ""})
+        t = Tmux("sac-test", runner=r)
+        rc = cmd_kill(self.cfg, self.store, t, self.root, "dev-1", boot_wait=0)
         self.assertEqual(rc, 1)
+        self.assertFalse(any(c[1] == "split-window" for c in r.calls))
+
+    def test_cmd_kill_revive_grid_resolve_janela(self):
+        d = Path(tempfile.mkdtemp())
+        (d / "sac.toml").write_text(GRID_VALID, encoding="utf-8")
+        (d / "prompts").mkdir()
+        (d / "prompts" / "leader.md").write_text("Você é o leader.", encoding="utf-8")
+        (d / "prompts" / "dev.md").write_text("Você é o dev-1.", encoding="utf-8")
+        cfg = load_config(d / "sac.toml")
+        store = Store(d / ".sac")
+        (d / ".sac").mkdir(parents=True, exist_ok=True)
+        r = FakeRunner(outputs={
+            "list-panes|-s": "%1|sac sidebar --watch\n%2|env SAC_AGENT=leader kimi\n%3|sac sidebar --watch\n",
+            "list-panes|-t": "%3|sac sidebar --watch\n",
+        })
+        t = Tmux("sac-test", runner=r)
+        rc = cmd_kill(cfg, store, t, d, "dev-1", boot_wait=0)
+        self.assertEqual(rc, 0)
+        lp_calls = [c for c in r.calls if c[1] == "list-panes" and "-t" in c]
+        self.assertTrue(any("sac-test:trabalho" in c for c in lp_calls),
+                        "revive deve consultar a janela 'trabalho' da gramática [windows]")
+        split_calls = [c for c in r.calls if c[1] == "split-window"]
+        self.assertEqual(len(split_calls), 1)
+        self.assertIn("%3", str(split_calls[0]), "split deve mirar a sidebar da janela trabalho")
 
     def test_cmd_kill_recreates_harness(self):
         r = FakeRunner(outputs={
@@ -591,6 +664,20 @@ class KillTest(unittest.TestCase):
         with patch("sac.commands.time.sleep") as mock_sleep:
             cmd_kill(self.cfg, self.store, t, self.root, "leader", boot_wait=1.5)
         mock_sleep.assert_any_call(1.5)
+
+    def test_cmd_kill_exporta_env_de_sessao(self):
+        r = FakeRunner(outputs={
+            "has-session": "",
+            "list-panes": "%1|env SAC_AGENT=leader kimi --model k3\n%2|sac sidebar\n",
+        })
+        t = Tmux("sac-test", runner=r)
+        rc = cmd_kill(self.cfg, self.store, t, self.root, "leader", boot_wait=0)
+        self.assertEqual(rc, 0)
+        split_calls = [c for c in r.calls if c[1] == "split-window"]
+        s = str(split_calls[0])
+        self.assertIn("SAC_AGENT=leader", s)
+        self.assertIn("SAC_ROOT=", s)
+        self.assertIn("SAC_CONFIG=", s)
 
 
 if __name__ == "__main__":

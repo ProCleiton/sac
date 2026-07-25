@@ -59,6 +59,24 @@ class LoadConfigTest(unittest.TestCase):
         cfg = self._load(VALID.replace("name = \"sac-test\"", "name = \"sac-test\"\nboot_wait = 3"))
         self.assertEqual(cfg.boot_wait, 3)
 
+    def test_session_size_defaults(self):
+        cfg = self._load(VALID)
+        self.assertEqual(cfg.session_width, 220)
+        self.assertEqual(cfg.session_height, 50)
+
+    def test_session_size_custom(self):
+        cfg = self._load(VALID.replace("name = \"sac-test\"", "name = \"sac-test\"\nwidth = 180\nheight = 40"))
+        self.assertEqual(cfg.session_width, 180)
+        self.assertEqual(cfg.session_height, 40)
+
+    def test_session_size_invalid_string(self):
+        with self.assertRaises(ConfigError):
+            self._load(VALID.replace("name = \"sac-test\"", "name = \"sac-test\"\nwidth = \"largo\""))
+
+    def test_session_size_not_positive(self):
+        with self.assertRaises(ConfigError):
+            self._load(VALID.replace("name = \"sac-test\"", "name = \"sac-test\"\nheight = -1"))
+
     def test_config_default_boot_wait_8(self):
         cfg = self._load(VALID.replace("notify_interval = 30\n", "").replace("poke_stale_after = 120\n", ""))
         self.assertEqual(cfg.boot_wait, 8, "default global deve ser 8")

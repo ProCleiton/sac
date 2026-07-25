@@ -129,3 +129,15 @@ class SacRootWiringTest(unittest.TestCase):
         self.assertEqual(rc, 0)
         self.assertEqual(m.call_args[0][3], self.d,
                          "project_root deve ser o dir do config, não o --sac-root")
+
+    def test_config_default_honra_sac_config_env(self):
+        # Sem --config e com SAC_CONFIG definido: usa o caminho da env,
+        # mesmo sem sac.toml no cwd
+        with patch.dict(os.environ, {"SAC_CONFIG": self.cfg_path}):
+            rc = main(["status"])
+        self.assertEqual(rc, 0)
+
+    def test_config_explicito_tem_precedencia_sobre_sac_config(self):
+        with patch.dict(os.environ, {"SAC_CONFIG": "/caminho/inexistente.toml"}):
+            rc = main(["--config", self.cfg_path, "status"])
+        self.assertEqual(rc, 0)

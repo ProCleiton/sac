@@ -19,7 +19,8 @@ from .tmux import Tmux, TmuxError
 
 def _build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="sac", description="Stupid Agentic Coordinator")
-    p.add_argument("--config", default="sac.toml", help="caminho do sac.toml")
+    p.add_argument("--config", default=os.environ.get("SAC_CONFIG") or "sac.toml",
+                   help="caminho do sac.toml (default: $SAC_CONFIG ou ./sac.toml)")
     p.add_argument("--sac-root", help="diretório raiz da fila (padrão: diretório do config / .sac)")
     sub = p.add_subparsers(dest="command", required=True)
 
@@ -99,7 +100,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         match args.command:
             case "up":
-                return cmd_up(cfg, store, tmux, project_root)
+                return cmd_up(cfg, store, tmux, project_root, config_path=cfg_path)
             case "inject":
                 return cmd_inject(cfg, tmux, project_root, args.agent)
             case "down":
@@ -134,7 +135,7 @@ def main(argv: list[str] | None = None) -> int:
                 cmd_run(cfg, store, tmux, args.loop, args.task)
                 return 0
             case "kill":
-                return cmd_kill(cfg, store, tmux, project_root, args.agent)
+                return cmd_kill(cfg, store, tmux, project_root, args.agent, config_path=cfg_path)
             case "daemon":
                 return run_daemon(cfg, store, tmux)
     except (ConfigError, StoreError) as e:
