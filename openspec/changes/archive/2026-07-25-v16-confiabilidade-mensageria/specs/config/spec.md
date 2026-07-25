@@ -1,4 +1,4 @@
-## MODIFIED Requirements
+## ADDED Requirements
 
 ### Requirement: Seção session com root opcional
 O sistema SHALL aceitar campo `root` opcional na seção `[session]` do `sac.toml`

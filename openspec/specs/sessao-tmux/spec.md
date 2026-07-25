@@ -98,30 +98,48 @@ Comandos de texto enviados aos panes SHALL ser literais (sem interpretação de 
 - **AND** um Enter separado é enviado 0.5s depois
 
 ### Requirement: Aterrissagem no leader
-Após a criação da sessão, o foco SHALL estar no leader.
+O sistema SHALL selecionar ao final do `sac up` a primeira window declarada
+em `[windows]`; sem `[windows]`, mantém o select na window do leader.
 
 #### Scenario: Select inicial
-- **WHEN** `sac up` conclui a criação
+- **WHEN** `sac up` conclui a criação sem `[windows]`
 - **THEN** `tmux select-window -t <session>:leader` e `tmux select-pane -t <harness_pane_id>` são executados
 
+#### Scenario: Attach na entry window
+- **GIVEN** `[windows]` com `main = "leader"` declarada primeiro
+- **WHEN** `sac up` conclui
+- **THEN** a window selecionada é `main` e o pane focado é o do leader
+
 ### Requirement: Persistência da largura da sidebar via hook client-resized
-O sistema SHALL manter a largura de 30 colunas das sidebars mesmo quando clientes tmux com terminais de largura diferente se conectam.
+O sistema SHALL manter a largura da sidebar (15%, mínimo 28 colunas) em TODAS
+as windows com sidebar quando o cliente redimensiona, em vez de assumir 1
+window por agente.
 
 #### Scenario: Hook registrado no boot
 - **WHEN** `sac up` cria a sessão
 - **THEN** um hook é registrado via `tmux set-hook -t <session> client-resized "..."` para re-aplicar resize das sidebars
-- **AND** o hook executa `resize-pane -x 30` em todos os panes de sidebar de todas as janelas de agente
+- **AND** o hook executa `resize-pane` nos panes marcados `@pane_role=sidebar` de todas as windows
 
 #### Scenario: Cliente attach redimensiona — sidebar restaurada
-- **GIVEN** sessão ativa com sidebars de 30 cols
-- **WHEN** um cliente attach com terminal de 80 cols e redimensiona para 120 cols (evento client-resized)
-- **THEN** o hook dispara e re-aplica `resize-pane -x 30` nas sidebars
-- **AND** a sidebar de cada janela de agente retorna a 30 cols
+- **GIVEN** sessão ativa com sidebars na largura do plano
+- **WHEN** um cliente attach com terminal de largura diferente (evento client-resized)
+- **THEN** o hook dispara e re-aplica a largura da sidebar em cada window
 
 #### Scenario: Hook não afeta pane do harness
 - **WHEN** o hook client-resized é executado
-- **THEN** apenas panes identificados como sidebar (comando contendo "sac sidebar") são redimensionados
+- **THEN** apenas panes com `@pane_role=sidebar` são redimensionados
 - **AND** o pane do harness de cada agente não é alterado
+
+#### Scenario: Resize com layout em grid
+- **GIVEN** sessão com `[windows]` (grid) no ar
+- **WHEN** o terminal é redimensionado
+- **THEN** o hook reaplica a largura da sidebar em cada window do plano
+
+#### Scenario: Resize com layout legado
+- **GIVEN** sessão sem `[windows]` no ar
+- **WHEN** o terminal é redimensionado
+- **THEN** o comportamento atual (sidebar 30 colunas por window de agente) é
+  preservado
 
 ### Requirement: Identificação de pane sidebar por comando
 O sistema SHALL conseguir localizar o pane da sidebar dentro de uma janela de agente para operações como kill e resize.
@@ -178,4 +196,83 @@ comando tmux.
 - **WHEN** `sac up` inicia
 - **THEN** se `cfg.socket` está definido, `Path(socket).parent.mkdir(parents=True, exist_ok=True)` é executado
 - **AND** a criação ocorre antes de `tmux new-session`
+
+### Requirement: Sidebar v3 — árvore com conectores e modelo
+A sidebar SHALL renderizar os agentes sob cada window com conectores de árvore
+(`├─` para todos exceto o último, `└─` para o último) e SHALL exibir o modelo
+do agente extraído de `--model <valor>` nos seus `args` (sem o prefixo de
+alias, ex.: `esteira/k3` → `k3`) ao lado do comando — ex.: `kimi/k3`. Agente
+sem `--model` exibe apenas o comando.
+
+#### Scenario: Árvore com 2 agentes numa window
+- **GIVEN** window `trabalho` com agentes `dev-1` (opencode) e `auditor`
+  (kimi, `--model esteira/k3`)
+- **WHEN** a sidebar é renderizada
+- **THEN** `dev-1` aparece com prefixo `├─` e `auditor` com `└─`
+- **AND** `auditor` exibe `kimi/k3` e `dev-1` exibe `opencode`
+
+#### Scenario: Agente único na window
+- **GIVEN** window `main` com apenas `leader`
+- **WHEN** a sidebar é renderizada
+- **THEN** `leader` aparece com prefixo `└─`
+
+### Requirement: Sidebar v3 — badge de inbox e tempo ocioso
+A sidebar SHALL exibir `(N)` ao lado do agente quando houver N > 0 mensagens
+pendentes em `inbox/<agente>/`, e SHALL exibir `· <idade>` (minutos `5m`,
+horas `1h`, dias `2d`) desde o último evento daquele agente no `log.jsonl`.
+Agente sem eventos no log não exibe idade.
+
+#### Scenario: Agente com inbox pendente e evento recente
+- **GIVEN** `dev-1` com 2 mensagens na inbox e último evento há 5 minutos
+- **WHEN** a sidebar é renderizada
+- **THEN** a linha de `dev-1` contém `(2)` e `· 5m`
+
+#### Scenario: Agente sem eventos
+- **GIVEN** agente sem nenhum evento no `log.jsonl`
+- **WHEN** a sidebar é renderizada
+- **THEN** sua linha não contém marcador de idade
+
+### Requirement: Status bar v2 — sem dicas estáticas, com sessão e resumo
+O `status-right` SHALL remover as dicas estáticas de mouse/atalhos e SHALL
+incluir `#S:#W` (sessão:window) e o resumo de agentes via
+`#(sac status --mini)`. `status-left` (modo + branch), título do pane, versão
+e data/hora são preservados.
+
+#### Scenario: Status bar após `sac up`
+- **GIVEN** sessão SAC no ar
+- **WHEN** o `sac up` termina
+- **THEN** `status-right` não contém `MouseDrag` nem `S-C-v`
+- **AND** contém `#S:#W` e `#(sac status --mini`
+
+### Requirement: Identidade estável do agente via `@agent` pane option
+O `sac up` SHALL gravar `@agent=<nome>` como pane option em todo pane de
+harness (layout grid e legado), e a sidebar e o status bar SHALL usar
+`@agent` — NÃO `pane_title` — para identificar agentes, pois harnesses
+sobrescrevem o título do pane após o boot (ex.: kimi → "Kimi Code").
+
+#### Scenario: Harness troca o título do pane
+- **GIVEN** sessão no ar com agente `leader` rodando kimi
+- **WHEN** o kimi muda o `pane_title` para "Kimi Code"
+- **THEN** a sidebar continua exibindo `leader` na árvore
+- **AND** o status bar exibe `leader` como agente focado
+
+### Requirement: Envio de teclas com delay e Enter extra
+O sistema SHALL, ao enviar teclas para panes tmux em contexto de mensageria
+(daemon deliver, poke), usar delay de 0.2s entre o texto e o Enter, além de
+incluir hint textual para destravar harness dormente.
+
+#### Scenario: send-keys com delay para mensageria
+- **WHEN** o daemon ou poke manual envia mensagem para um pane
+- **THEN** o texto é injetado via `tmux send-keys -t <target> -l -- <text>` (literal)
+- **AND** após 0.2s, um Enter é enviado via `tmux send-keys -t <target> Enter`
+- **AND** o texto injetado contém hint `"SAC: mensagem — rode \`sac next\`"` ao final
+
+### Requirement: Injeção de prompt com contrato de escalação
+O sistema SHALL preceder todo prompt injetado (boot e `sac inject`) com o
+contrato de escalação padrão, formatado com o nome do líder da configuração.
+
+#### Scenario: Contrato precede o prompt_file
+- **WHEN** `_inject_prompt` injeta o prompt de um agente
+- **THEN** o contrato de escalação é injetado antes do conteúdo do prompt_file
+- **AND** o nome do líder no contrato é o do agente com role `leader`
 

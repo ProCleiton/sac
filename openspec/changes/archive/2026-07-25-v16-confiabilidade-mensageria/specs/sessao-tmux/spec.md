@@ -1,4 +1,4 @@
-## MODIFIED Requirements
+## ADDED Requirements
 
 ### Requirement: Envio de teclas com delay e Enter extra
 O sistema SHALL, ao enviar teclas para panes tmux em contexto de mensageria
