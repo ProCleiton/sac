@@ -143,6 +143,37 @@ prompts, the `sac init` wizard, and every-day commands.
   the original sender via `sac send <sender> "<result>"` before writing `SAC_DONE`
   and running `sac done <id>`.
 
+## SAC and your harness
+
+SAC does not configure your harness — it launches the same binary you already
+use, in a tmux pane, and delivers messages to it. Everything the harness knows
+how to do keeps working, untouched.
+
+- **Plugins and skills work with zero extra config**: global plugins/skills
+  (`~/.kimi/plugins`, `~/.claude/skills`, `~/.config/opencode`) and project-level
+  ones (`.claude/skills`, `AGENTS.md`) are loaded by the harness itself — SAC
+  neither replaces nor disables anything. The `prompt_file` is **not**
+  configuration: it is a message injected into the first turn, nothing more.
+- **What lives where**:
+
+  | Concern | Owner | Where |
+  |---------|-------|-------|
+  | Plugins, skills, login, model, harness flags | you | the harness's own config files |
+  | Agents, roles, layout, socket, loops | SAC | `sac.toml` |
+  | Agent behavior (contracts, workflow) | you | `prompts/*.md` |
+
+- **Pre-warm before the first `sac up`**: run the harness once in the workspace
+  directory (e.g. `kimi .`) to approve logins, plugins and interactive consents.
+  SAC does not — and should not — answer harness dialogs.
+- **Long-term memory lives in files**: memory shared across agents belongs in
+  workspace files (`AGENTS.md`, `handoff/`, `docs/`) — any harness can read
+  Markdown. Harness memory plugins are per-harness and per-process; they don't
+  share across agents. The discipline of reading and recording lives in the
+  prompt contracts (SAC delivers letters; behavior is in the manuals).
+- **Stupid on purpose**: SAC doesn't configure the harness, doesn't orchestrate
+  your workflow, doesn't impose anything — it just delivers messages. All the
+  intelligence lives in the contracts and in each layer's own config.
+
 ## Credits
 
 - Inspired by the **CCB (Claude Code Bridge)** project, whose multi-agent tmux

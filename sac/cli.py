@@ -8,7 +8,7 @@ import sys
 from pathlib import Path
 
 from .commands import (
-    cmd_done, cmd_down, cmd_inject, cmd_kill, cmd_log, cmd_next,
+    cmd_done, cmd_doctor, cmd_down, cmd_inject, cmd_kill, cmd_log, cmd_next,
     cmd_notify, cmd_recv, cmd_run, cmd_send, cmd_sidebar, cmd_sidebar_toggle, cmd_status, cmd_up,
 )
 from .config import ConfigError, load_config
@@ -71,6 +71,7 @@ def _build_parser() -> argparse.ArgumentParser:
     sp.add_argument("agent")
 
     sub.add_parser("init", help="cria sac.toml + prompts + .sac/ via questionário interativo")
+    sub.add_parser("doctor", help="diagnóstico do ambiente (Python, tmux, socket, config, harnesses)")
     sub.add_parser("daemon", help="daemon de mensageria (uso interno, sobe no dashboard)")
     return p
 
@@ -82,6 +83,8 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_init(root=Path(args.config).resolve().parent)
 
     cfg_path = Path(args.config).resolve()
+    if args.command == "doctor":
+        return cmd_doctor(cfg_path)
     try:
         cfg = load_config(cfg_path)
     except ConfigError as e:

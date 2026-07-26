@@ -1521,3 +1521,79 @@ class SidebarInteractTest(unittest.TestCase):
         _handle_input("\r", hits, 3, self.tmux)
         sel = [c for c in self.runner.calls if c[1] == "select-pane"]
         self.assertEqual(sel[-1][-1], "%4", "Enter ativa a linha do cursor")
+
+
+class DoctorTest(unittest.TestCase):
+    def setUp(self):
+        from sac.commands import cmd_doctor
+        self.cmd_doctor = cmd_doctor
+        self.d = Path(tempfile.mkdtemp())
+        (self.d / "sac.toml").write_text(VALID, encoding="utf-8")
+        self.saida = []
+
+    def _run(self, **kwargs):
+        self.saida = []
+        kwargs.setdefault("stdout", self.saida.append)
+        kwargs.setdefault("which", lambda cmd: f"/usr/bin/{cmd}")
+        kwargs.setdefault("tmux_version", lambda: "tmux 3.4")
+        kwargs.setdefault("py_version", (3, 12, 5))
+        rc = self.cmd_doctor(kwargs.pop("config_path", self.d / "sac.toml"), **kwargs)
+        return rc, "\n".join(self.saida)
+
+    def test_tudo_ok(self):
+        rc, out = self._run()
+        self.assertEqual(rc, 0)
+        self.assertIn("[OK]  Python 3.12.5", out)
+        self.assertIn("[OK]  tmux 3.4", out)
+        self.assertIn("[OK]  config", out)
+        self.assertNotIn("[FAIL]", out)
+        self.assertNotIn("[WARN]", out)
+
+    def test_tmux_ausente(self):
+        rc, out = self._run(which=lambda cmd: None if cmd == "tmux" else f"/usr/bin/{cmd}")
+        self.assertEqual(rc, 1)
+        self.assertIn("[FAIL] tmux not found", out)
+        self.assertIn("apt install tmux", out)
+
+    def test_python_antigo(self):
+        rc, out = self._run(py_version=(3, 10, 2))
+        self.assertEqual(rc, 1)
+        self.assertIn("[FAIL] Python 3.10.2 < 3.11", out)
+
+    def test_harness_ausente_warning(self):
+        rc, out = self._run(which=lambda cmd: None if cmd == "opencode" else f"/usr/bin/{cmd}")
+        self.assertEqual(rc, 0, "harness ausente é warning, não falha")
+        self.assertIn("[WARN] harness 'opencode' not found in PATH", out)
+
+    def test_sem_config(self):
+        rc, out = self._run(config_path=self.d / "inexistente.toml")
+        self.assertEqual(rc, 0)
+        self.assertIn("[OK]  Python", out)
+        self.assertIn("[OK]  tmux", out)
+        self.assertIn("[WARN] config", out)
+        self.assertNotIn("harness", out, "checagens dependentes de config são puladas")
+
+    def test_config_invalida(self):
+        (self.d / "sac.toml").write_text("toml quebrado [[[", encoding="utf-8")
+        rc, out = self._run()
+        self.assertEqual(rc, 1)
+        self.assertIn("[FAIL] config", out)
+
+    def test_tmux_versao_antiga(self):
+        rc, out = self._run(tmux_version=lambda: "tmux 3.1")
+        self.assertEqual(rc, 1)
+        self.assertIn("[FAIL] tmux 3.1 < 3.2", out)
+
+    def test_socket_dir_nao_gravavel(self):
+        toml = VALID.replace('[session]\nname = "sac-test"',
+                             '[session]\nname = "sac-test"\nsocket = "/nao/existe/tmux.sock"')
+        (self.d / "sac.toml").write_text(toml, encoding="utf-8")
+        rc, out = self._run()
+        self.assertEqual(rc, 1)
+        self.assertIn("[FAIL] socket", out)
+
+    def test_sem_side_effects(self):
+        antes = set(self.d.rglob("*"))
+        self._run()
+        depois = set(self.d.rglob("*"))
+        self.assertEqual(antes, depois, "doctor não deve criar/modificar arquivos")
