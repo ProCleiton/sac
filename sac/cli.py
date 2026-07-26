@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import importlib.metadata
 import os
 import sys
 from pathlib import Path
@@ -22,6 +23,8 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument("--config", default=os.environ.get("SAC_CONFIG") or "sac.toml",
                    help="caminho do sac.toml (default: $SAC_CONFIG ou ./sac.toml)")
     p.add_argument("--sac-root", help="diretório raiz da fila (padrão: diretório do config / .sac)")
+    p.add_argument("--version", action="version",
+                   version=importlib.metadata.version("sac"))
     sub = p.add_subparsers(dest="command", required=True)
 
     sub.add_parser("up", help="sobe a sessão tmux com os agentes")

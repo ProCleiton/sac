@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import hashlib
-import importlib.metadata
 import json
 import os
 import re
@@ -225,10 +224,15 @@ class _Progress:
 
 
 TIPS_LINES = [
-    "C-b e sidebar      C-b o next",
-    "C-b h/j/k/l pane   C-b z zoom",
-    "C-b H/J/K/L resize C-b w tree",
-    "C-b [ copy         C-b d detach",
+    "  C-b e sidebar",
+    "  C-b o next",
+    "  C-b h/j/k/l pane",
+    "  C-b z zoom",
+    "  C-b H/J/K/L resize",
+    "  C-b w tree",
+    "  C-b [ copy",
+    "  C-b ] paste",
+    "  C-b d detach",
 ]
 
 
@@ -259,7 +263,7 @@ _ANSI = {
 
 
 def _section(title: str) -> str:
-    pad = "─" * max(2, 22 - len(title))
+    pad = "─" * max(2, 23 - len(title))
     return f"{_ANSI['orange']}╭─ {title} {pad}╮{_ANSI['reset']}"
 
 
@@ -279,13 +283,8 @@ def _sidebar_marker(store: Store, agent: str, escalated: set[str]) -> str:
 
 
 def _agent_model(agent) -> str:
-    """`comando/modelo` extraído de --model nos args (sem alias); sem model → comando."""
-    cmd = agent.command.rsplit("/", 1)[-1]
-    args = getattr(agent, "args", []) or []
-    for i, a in enumerate(args[:-1]):
-        if a == "--model":
-            return f"{cmd}/{args[i + 1].split('/')[-1]}"
-    return cmd
+    """Basename do comando do harness."""
+    return agent.command.rsplit("/", 1)[-1]
 
 
 _ANSI_RE = re.compile(r"\033\[[0-9;]*m")
@@ -386,7 +385,7 @@ def _render_sidebar(cfg: Config, store: Store, tmux: Tmux,
     rows += [(l, None) for l in _comms_lines(store)]
     rows.append(("", None))
     rows.append((_section("tips"), None))
-    tips = [f"{_ANSI['green']}{l[:18]}{_ANSI['dim']}{l[18:]}{_ANSI['reset']}" for l in TIPS_LINES]
+    tips = [f"{_ANSI['green']}{l}{_ANSI['reset']}" for l in TIPS_LINES]
     rows += [(l, None) for l in tips]
     hits = {i: a for i, (_, a) in enumerate(rows) if a}
     import shutil
@@ -617,18 +616,23 @@ def _install_legacy_resize_hook(cfg: Config, tmux: Tmux) -> None:
         f"run-shell 'for w in {agent_names}; do "
         f"id=$({tmux_bin} list-panes -t {tmux.session}:$w "
         f"-F \"##{{pane_id}} ##{{pane_start_command}}\" | grep \"sac sidebar\" | cut -d\" \" -f1); "
-        f"[ -n \"$id\" ] && {tmux_bin} resize-pane -t \"$id\" -x {SIDEBAR_WIDTH}; "
+        f"if [ -n \"$id\" ]; then "
+        f"ww=$({tmux_bin} display-message -p -t {tmux.session}:$w \"#{{window_width}}\"); "
+        f"side=$(( ww * {SIDEBAR_PCT} / 100 )); "
+        f"[ $side -lt {SIDEBAR_MIN_COLS} ] && side={SIDEBAR_MIN_COLS}; "
+        f"{tmux_bin} resize-pane -t \"$id\" -x $side; "
+        f"fi; "
         f"done; true'")
     tmux._run("set-hook", "-t", tmux.session, "client-resized", hook_cmd)
 
 
 def _mark_sidebar_pane(tmux: Tmux, pid: str) -> None:
     tmux.set_pane_option(pid, "@pane_role", "sidebar")
-    tmux.set_pane_option(pid, "pane-border-format", "")
+    tmux.set_pane_option(pid, "pane-border-format", " #[fg=colour245] sidebar #[default] ")
 
 
 SIDEBAR_MIN_COLS = 28
-SIDEBAR_PCT = 15
+SIDEBAR_PCT = 18
 
 AGENT_PALETTE = [203, 215, 114, 39, 75, 141, 176, 180]
 
@@ -637,13 +641,6 @@ def agent_color(name: str) -> int:
     """Cor estável por agente: hash do nome na paleta fixa."""
     h = hashlib.sha256(name.encode("utf-8")).hexdigest()
     return AGENT_PALETTE[int(h, 16) % len(AGENT_PALETTE)]
-
-
-def _sac_version() -> str:
-    try:
-        return importlib.metadata.version("sac")
-    except importlib.metadata.PackageNotFoundError:
-        return "dev"
 
 
 def _configure_appearance(cfg: Config, tmux: Tmux, project_root: Path,
@@ -657,15 +654,33 @@ def _configure_appearance(cfg: Config, tmux: Tmux, project_root: Path,
         tmux.set_pane_option(pid, "pane-border-format",
                              f" #[fg=colour{color},bold] #{{@agent}} #[default] ")
         tmux.set_pane_option(pid, "pane-border-style", "fg=colour240")
+    # Status bar v4 — paleta Catppuccin CCB com separadores powerline
+    workspace = project_root.name
+    tmux._run("set-option", "-t", tmux.session, "status-style", "bg=#1e1e2e,fg=#cdd6f4")
     tmux._run("set-option", "-t", tmux.session, "status-left",
-              "#{?client_prefix,#[bg=colour203],"
-              "#{?pane_in_mode,#[bg=colour215],#[bg=colour213]}}"
-              "#[fg=colour0,bold] #{?client_prefix,KEY,#{?pane_in_mode,COPY,INPUT}} #[default]"
-              "#[fg=colour245]#{session_name} ")
+              "#[bg=#{?client_prefix,#f38ba8,"
+              "#{?pane_in_mode,#fab387,#f5c2e7}}]"
+              "#[fg=#1e1e2e,bold] "
+              "#{?client_prefix,KEY,#{?pane_in_mode,COPY,INPUT}} "
+              "#[fg=#{?client_prefix,#f38ba8,"
+              "#{?pane_in_mode,#fab387,#f5c2e7}},bg=#1e1e2e]\ue0b0"
+              "#[align=centre]"
+              f"#[fg=#6c7086] {workspace} "
+              "#[align=left]")
     tmux._run("set-option", "-t", tmux.session, "status-right",
-              f"#{{@agent}} SAC {_sac_version()} "
-              f"#(sac status --mini 2>/dev/null) "
-              f"#(date +\"%d/%m %a %H:%M\") ")
+              "#[fg=#f38ba8,bg=#1e1e2e]"
+              "#[fg=#1e1e2e,bg=#f38ba8,bold] #{@agent} "
+              "#[fg=#cba6f7,bg=#f38ba8]\ue0b2"
+               "#[fg=#1e1e2e,bg=#cba6f7,bold] SAC "
+               "#(sac --version 2>/dev/null) "
+               "#[fg=#89b4fa,bg=#cba6f7]\ue0b2"
+              "#[fg=#1e1e2e,bg=#89b4fa] "
+              "#(sac status --mini 2>/dev/null) "
+              "#[fg=#fab387,bg=#89b4fa]\ue0b2"
+              "#[fg=#1e1e2e,bg=#fab387,bold] "
+              "#(date +\"%d/%m %a %H:%M\") #[default]")
+    tmux._run("set-option", "-t", tmux.session, "status-left-length", "80")
+    tmux._run("set-option", "-t", tmux.session, "status-right-length", "120")
     tmux._run("set-option", "-g", "window-status-format", "")
     tmux._run("set-option", "-g", "window-status-current-format", "")
     tmux_bin = f"tmux -S {cfg.socket}" if cfg.socket else "tmux"
@@ -682,7 +697,7 @@ def _install_grid_resize_hook(cfg: Config, tmux: Tmux) -> None:
         f"run-shell 'for p in $({tmux_bin} list-panes -s -t {tmux.session} "
         f"-F \"##{{pane_id}} ##{{@pane_role}}\" | awk \"$2 == \\\"sidebar\\\" {{print $1}}\"); do "
         f"w=$({tmux_bin} display-message -p -t \"$p\" \"##{{window_width}}\"); "
-        f"c=$((w * 15 / 100)); [ $c -lt 28 ] && c=28; "
+        f"c=$((w * {SIDEBAR_PCT} / 100)); [ $c -lt {SIDEBAR_MIN_COLS} ] && c={SIDEBAR_MIN_COLS}; "
         f"{tmux_bin} resize-pane -t \"$p\" -x $c; done; true'")
     tmux._run("set-hook", "-t", tmux.session, "client-resized", hook)
 

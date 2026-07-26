@@ -435,7 +435,9 @@ class UpDownStatusTest(unittest.TestCase):
         self.assertIn("##{pane_id}", hook_str)
         self.assertIn("list-panes", hook_str)
         self.assertIn("resize-pane", hook_str)
-        self.assertIn("-x 30", hook_str)
+        self.assertIn("* 18 / 100", hook_str)
+        self.assertIn("window_width", hook_str)
+        self.assertIn("-lt 28", hook_str)
         self.assertIn("leader", hook_str)
         self.assertIn("dev-1", hook_str)
         self.assertIn("true", hook_str)
@@ -454,12 +456,17 @@ class UpDownStatusTest(unittest.TestCase):
         self.assertEqual(sleep_calls[0], 8.0, "agente sem override usa global 8")
         self.assertEqual(sleep_calls[1], 12.0, "agente com boot_wait=12 usa 12")
 
-    def test_hook_valid_structure(self):
-        r = FakeRunner(outputs={("rc", "has-session"): 1, "list-windows": "leader\ndev-1\ndash\n"})
+    def test_sidebar_cols_com_18_pct(self):
+        """_sidebar_cols com SIDEBAR_PCT=18: 220 col → ~40; piso 28"""
+        from sac.commands import _sidebar_cols
+        r = FakeRunner(outputs={"display-message": "220"})
         t = Tmux("sac-test", runner=r)
-        cmd_up(self.cfg, self.store, t, self.root, boot_wait=0)
-        hook_call = [c for c in r.calls if c[1] == "set-hook"][0]
-        hook_str = " ".join(hook_call)
+        cols = _sidebar_cols(t, "%1")
+        self.assertEqual(cols, 40)
+        r2 = FakeRunner(outputs={"display-message": "100"})
+        t2 = Tmux("sac-test", runner=r2)
+        cols2 = _sidebar_cols(t2, "%1")
+        self.assertEqual(cols2, 28)
 
     def test_hook_with_socket(self):
         r = FakeRunner(outputs={
@@ -991,7 +998,31 @@ class SidebarV2Test(unittest.TestCase):
         self.assertIn("tips", out)
         self.assertIn("C-b e", out)
         self.assertIn("C-b z", out)
+        import re
+        plain = re.sub(r"\033\[[0-9;]*m", "", out)
+        linhas_cb = [l.strip() for l in plain.splitlines() if l.strip().startswith("C-b")]
+        self.assertIn("paste", out)
+        self.assertEqual(len(linhas_cb), 9, "9 atalhos, cada um na sua linha")
+        for linha in linhas_cb:
+            self.assertEqual(linha.count("C-b"), 1, f"um atalho por linha: {linha!r}")
+        linhas_tips = [l for l in plain.splitlines() if "C-b" in l]
+        for linha in linhas_tips:
+            self.assertTrue(linha.startswith("  "), f"tip indentado com 2 espaços: {linha!r}")
 
+    def test_sem_scrollbar(self):
+        """seções comms e tips sem barra de rolagem"""
+        for i in range(8):
+            self.store.send("user", "dev-1", f"m{i}")
+        out = self._render()
+        import re
+        plain = re.sub(r"\033\[[0-9;]*m", "", out)
+        self.assertNotIn("│", plain, "sem trilho de rolagem")
+        self.assertNotIn("█", plain, "sem polegar de rolagem")
+        # molduras intactas
+        for secao in ("comms", "tips"):
+            header = [l for l in plain.splitlines() if f"╭─ {secao}" in l]
+            if header:
+                self.assertIn("╮", header[0], f"cabeçalho {secao} com borda direita intacta")
 
 GRID_V3_MODEL = """
 [session]
@@ -1037,8 +1068,9 @@ class SidebarV3Test(unittest.TestCase):
 
     def test_modelo_extraido_dos_args(self):
         out = self._render()
-        self.assertIn("└─ leader · kimi/k3", out)   # alias esteira/ removido
-        self.assertIn("└─ * dev-1 · opencode", out)    # agente único na window → └─; sem --model → só comando
+        self.assertIn("└─ leader · kimi", out)
+        self.assertNotIn("k3", out, "modelo não deve aparecer — SAC é agnóstico a modelo")
+        self.assertIn("└─ * dev-1 · opencode", out)
         self.assertNotIn("esteira/", out)
 
     def test_badge_inbox_e_tempo_ocioso(self):
@@ -1056,7 +1088,7 @@ class SidebarV3Test(unittest.TestCase):
         out = self._render()
         linha = next(l for l in out.splitlines() if "leader" in l)
         self.assertNotIn("· 0m", linha)
-        self.assertRegex(linha, r"kimi/k3\s*$")
+        self.assertRegex(linha, r"kimi\s*$")
 
     def test_identidade_via_agent_option_nao_pane_title(self):
         """Harness troca o pane_title (kimi vira 'Kimi Code') — a árvore usa @agent."""
@@ -1083,11 +1115,12 @@ class SidebarV3Test(unittest.TestCase):
         from types import SimpleNamespace
         from sac.commands import _agent_model
         a = SimpleNamespace(command="/tmp/x/bin/fake", args=["--model", "esteira/k3"])
-        self.assertEqual(_agent_model(a), "fake/k3")
+        self.assertEqual(_agent_model(a), "fake")
         b = SimpleNamespace(command="/usr/bin/opencode", args=[])
         self.assertEqual(_agent_model(b), "opencode")
 
-    def test_linhas_truncadas_na_largura_do_terminal(self):
+    def test_linhas_longas_truncam_com_truncate(self):
+        """linhas longas são truncadas (sem wrap) e moldura íntegra"""
         import shutil
         from unittest.mock import patch
         longo = "x" * 120
@@ -1096,9 +1129,39 @@ class SidebarV3Test(unittest.TestCase):
             gts.return_value = shutil.os.terminal_size((30, 24))
             out = self._render()
         import re as _re
-        for linha in out.splitlines():
+        linhas = out.splitlines()
+        for linha in linhas:
             visivel = _re.sub(r"\033\[[0-9;]*m", "", linha)
-            self.assertLessEqual(len(visivel), 30, f"linha excede a largura: {linha!r}")
+            self.assertLessEqual(len(visivel), 30, f"linha não excede a largura: {linha!r}")
+        # moldura do sidebar (section) intacta — sem quebras internas
+        for linha in linhas:
+            plain = _re.sub(r"\033\[[0-9;]*m", "", linha)
+            if "comms" in plain or "tips" in plain:
+                self.assertTrue(plain.startswith("╭─"), f"moldura sem quebra: {plain!r}")
+
+    def test_truncate_ansi_corta_longo(self):
+        """_truncate_ansi corta linha longa sem wrap"""
+        from sac.commands import _truncate_ansi
+        line = "linha-bem-longa-para-testar-truncamento"
+        truncated = _truncate_ansi(line, 10)
+        import re as _re
+        self.assertLessEqual(len(_re.sub(r"\033\[[0-9;]*m", "", truncated)), 10)
+        self.assertIn("linha-bem", truncated)
+
+    def test_truncate_ansi_linha_curta_inalterada(self):
+        """linhas curtas não são afetadas pelo truncamento"""
+        from sac.commands import _truncate_ansi
+        line = "curta"
+        self.assertEqual(_truncate_ansi(line, 20), line)
+
+    def test_truncate_ansi_preserva_cores(self):
+        """_truncate_ansi preserva códigos ANSI ao truncar"""
+        from sac.commands import _truncate_ansi, _ANSI
+        colored = f"{_ANSI['green']}linha-longa-para-testar{_ANSI['reset']}"
+        truncated = _truncate_ansi(colored, 5)
+        self.assertIn("\033[", truncated, "códigos ANSI preservados")
+        import re as _re
+        self.assertLessEqual(len(_re.sub(r"\033\[[0-9;]*m", "", truncated)), 5)
 
     def test_frame_limpa_cada_linha(self):
         from sac.commands import _frame
@@ -1182,11 +1245,13 @@ class AppearanceTest(unittest.TestCase):
         right_full = next(s for s in setopts if "status-right" in s)
         self.assertIn("@agent", right_full,
                       "rodapé mostra @agent (imune à troca de pane_title pelo harness)")
-        self.assertTrue(any("status-left" in s and "session_name" in s for s in setopts),
-                        "status-left com session_name (sem branch)")
+        self.assertTrue(any("status-left" in s and self.root.name in s for s in setopts),
+                        "status-left com workspace name (sem branch)")
         self.assertTrue(any("status-right" in s and "SAC" in s and "{@agent}" in s
                             for s in setopts),
                         "status-right com @agent e versão")
+        self.assertTrue(any("sac --version" in s for s in setopts),
+                        "versão dinâmica via #(sac --version)")
         right = next(s for s in setopts if "status-right" in s)
         self.assertNotIn("MouseDrag", right)
         self.assertNotIn("S-C-v", right)
@@ -1219,12 +1284,12 @@ class AppearanceTest(unittest.TestCase):
 
     # -- v20: Status bar v3 --
     def test_status_left_v3_sem_lista_janelas(self):
-        """1.1 status-left contém modo + session_name, sem #S:#W"""
+        """1.1 status-left contém modo + workspace name, sem #S:#W"""
         rc = cmd_up(self.cfg, self.store, self.tmux, self.root, boot_wait=0)
         self.assertEqual(rc, 0)
         setopts = [" ".join(c) for c in self.runner.calls if c[1] == "set-option"]
         sl = next(s for s in setopts if "status-left" in s)
-        self.assertIn("session_name", sl)
+        self.assertIn(self.root.name, sl, "status-left contém basename do project_root")
         self.assertNotIn("#S:#W", sl, "sem referência a session:window")
         self.assertNotIn("#W", sl, "sem referência a window name")
 
@@ -1236,6 +1301,7 @@ class AppearanceTest(unittest.TestCase):
         sr = next(s for s in setopts if "status-right" in s)
         self.assertIn("{@agent}", sr)
         self.assertIn("SAC", sr)
+        self.assertIn("#(sac --version 2>/dev/null)", sr)
         self.assertIn("sac status --mini", sr)
         self.assertIn('date +"%d/%m %a %H:%M"', sr)
         self.assertNotIn("MouseDrag", sr)
@@ -1252,16 +1318,17 @@ class AppearanceTest(unittest.TestCase):
         self.assertGreaterEqual(len(agent_pbf), 2,
                                 "leader e dev-1 têm pane-border-format com #{@agent}")
 
-    def test_sidebar_border_format_vazio(self):
-        """2.2 sidebar mantém pane-border-format vazio (sem label na moldura)"""
+    def test_sidebar_border_format_restaurado(self):
+        """sidebar com label 'sidebar' na moldura"""
         rc = cmd_up(self.cfg, self.store, self.tmux, self.root, boot_wait=0)
         self.assertEqual(rc, 0)
         calls = self.runner.calls
-        # sidebar panes recebem pane-border-format="" em _mark_sidebar_pane
         sidebar_border = [c for c in calls if c[1] == "set-option"
-                          and "pane-border-format" in c and len(c) > 2 and c[-1] == ""]
+                          and "pane-border-format" in c and "sidebar" in c[-1]]
         self.assertGreaterEqual(len(sidebar_border), 2,
-                                "cada sidebar recebe formato vazio (leader, dev-1)")
+                                "cada sidebar recebe label 'sidebar' na moldura")
+        self.assertIn("colour245", sidebar_border[0][-1],
+                      "label sidebar em cinza discreto")
 
     def test_active_pane_hook_realce(self):
         """2.4 after-select-pane hook com @agent_color para realce do ativo"""
@@ -1290,6 +1357,100 @@ class AppearanceTest(unittest.TestCase):
         for c in mouse_calls:
             self.assertEqual(c[2], "-t",
                              "mouse é session option, mantém -t <session>")
+
+    # -- v21: Status bar v4 (cores CCB) --
+    def test_status_left_v4_cores_ccb(self):
+        """status-left: sem bloco mauve, workspace centralizado em cinza"""
+        rc = cmd_up(self.cfg, self.store, self.tmux, self.root, boot_wait=0)
+        self.assertEqual(rc, 0)
+        setopts = [" ".join(c) for c in self.runner.calls if c[1] == "set-option"]
+        sl = next(s for s in setopts if "status-left" in s)
+        self.assertIn("f5c2e7", sl, "pink default")
+        self.assertIn("f38ba8", sl, "red no client-prefix")
+        self.assertIn("fab387", sl, "peach no copy-mode")
+        self.assertIn("\ue0b0", sl, "glifo powerline direito U+E0B0")
+        self.assertNotIn("#S:#W", sl)
+        self.assertIn("#1e1e2e", sl, "base escuro")
+        # BUG 3: condicional DENTRO do atributo, ramos só com cor nua
+        self.assertNotIn(",#[", sl, "nenhum condicional com vírgula+atributo nos ramos")
+        # workspace centralizado em cinza sobre fundo base (sem bg=#cba6f7)
+        self.assertIn("bg=#{?client_prefix", sl, "bg dinâmico por modo")
+        self.assertNotIn("bg=#cba6f7]#[fg=#1e1e2e,bold]", sl, "bg mauve estático removido do bloco de modo")
+        self.assertIn("#[align=centre]", sl, "workspace centralizado na barra")
+        self.assertIn("#[fg=#6c7086]", sl, "workspace em cinza overlay")
+        self.assertIn(self.root.name, sl, "status-left contém basename do project_root")
+        self.assertNotIn("session_name", sl, "workspace name (basename project_root) substitui session_name")
+        # workspace NÃO está em bloco mauve
+        mauve_block = f"fg=#1e1e2e,bg=#cba6f7] {self.root.name}"
+        self.assertNotIn(mauve_block, sl, "workspace não está em bloco com bg=#cba6f7")
+        self.assertIn("#[align=left]", sl, "reset alignment após workspace")
+
+    def test_status_style_setado(self):
+        """status-style bg=#1e1e2e fg=#cdd6f4 (session scope)"""
+        rc = cmd_up(self.cfg, self.store, self.tmux, self.root, boot_wait=0)
+        self.assertEqual(rc, 0)
+        calls = [c for c in self.runner.calls if c[1] == "set-option"
+                 and "status-style" in c]
+        self.assertEqual(len(calls), 1, "status-style deve ser setado")
+        style = " ".join(calls[0])
+        self.assertIn("bg=#1e1e2e", style)
+        self.assertIn("fg=#cdd6f4", style)
+        self.assertEqual(calls[0][2], "-t", "session scope")
+
+    def test_status_left_length_setado(self):
+        """status-left-length=80 (session scope)"""
+        rc = cmd_up(self.cfg, self.store, self.tmux, self.root, boot_wait=0)
+        self.assertEqual(rc, 0)
+        calls = [c for c in self.runner.calls if c[1] == "set-option"
+                 and "status-left-length" in c]
+        self.assertEqual(len(calls), 1, "status-left-length deve ser setado")
+        self.assertEqual(calls[0][-1], "80")
+        self.assertEqual(calls[0][2], "-t", "session scope")
+
+    def test_status_right_v4_segmentos_ccb(self):
+        """status-right com 4 segmentos powerline e length=120"""
+        rc = cmd_up(self.cfg, self.store, self.tmux, self.root, boot_wait=0)
+        self.assertEqual(rc, 0)
+        setopts = [" ".join(c) for c in self.runner.calls if c[1] == "set-option"]
+        sr = next(s for s in setopts if "status-right" in s)
+        self.assertIn("f38ba8", sr, "red para agente")
+        self.assertIn("#{@agent}", sr, "@agent com chave única")
+        self.assertNotIn("#{{", sr, "nenhum escape de f-string")
+        self.assertIn("SAC", sr)
+        self.assertIn("#(sac --version 2>/dev/null)", sr)
+        self.assertIn("89b4fa", sr, "blue para status-mini")
+        self.assertIn("sac status --mini", sr)
+        self.assertIn("fab387", sr, "peach para data")
+        self.assertIn('date +"%d/%m %a %H:%M"', sr)
+        self.assertEqual(sr.count("\ue0b2"), 3, "3 separadores powerline U+E0B2")
+        self.assertIn("#1e1e2e", sr, "texto em base escuro")
+        self.assertNotIn("MouseDrag", sr)
+        self.assertNotIn("#S:#W", sr)
+        self.assertNotIn(",#[", sr, "status-right sem condicional quebrado")
+
+    def test_status_right_length_setado(self):
+        """status-right-length=120 (session scope)"""
+        rc = cmd_up(self.cfg, self.store, self.tmux, self.root, boot_wait=0)
+        self.assertEqual(rc, 0)
+        calls = [c for c in self.runner.calls if c[1] == "set-option"
+                 and "status-right-length" in c]
+        self.assertEqual(len(calls), 1, "status-right-length deve ser setado")
+        self.assertEqual(calls[0][-1], "120")
+        self.assertEqual(calls[0][2], "-t", "session scope")
+
+    # -- v21: Caixas comms/tips --
+    def test_section_padding_comms_maior(self):
+        """_section() com padding maior (N=23) maximiza uso da sidebar"""
+        from sac.commands import _section
+        comms = _section("comms")
+        tips = _section("tips")
+        import re
+        plain = re.sub(r"\033\[[0-9;]*m", "", comms)
+        self.assertGreater(len(plain), 27, "comms > 27 chars (v20)")
+        self.assertLessEqual(len(plain), 28, "comms <= SIDEBAR_MIN_COLS=28")
+        plain_t = re.sub(r"\033\[[0-9;]*m", "", tips)
+        self.assertGreater(len(plain_t), 27, "tips > 27 chars")
+        self.assertLessEqual(len(plain_t), 28, "tips <= SIDEBAR_MIN_COLS=28")
 
 
 class ProgressBarTest(unittest.TestCase):
