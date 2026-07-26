@@ -1,0 +1,35 @@
+name: release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install package + dev deps
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e . pytest build
+
+      - name: Run test suite
+        run: python -m pytest -q
+
+      - name: Build sdist + wheel
+        run: python -m build
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release create "${{ github.ref_name }}" dist/* --generate-notes --verify-tag
