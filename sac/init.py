@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Callable
 
 from .config import AgentConfig, Config, LoopConfig
-from .contracts import CONTRACTS, DEFAULT_AUX_CONTRACT, LEADER_CONTRACT
+from .contracts import AUX_CONTRACTS, CONTRACTS, DEFAULT_AUX_CONTRACT, LEADER_CONTRACT
 
 KIMI_NOTE = """- Kimi Code: respostas longas e analíticas.
 - O modelo é o que você configurou nos args do agente (ex.: `--model <alias/modelo>`).
@@ -70,13 +70,37 @@ def _contract_by_key(key: str) -> dict:
 
 def _ask_contract(stdin, stdout) -> dict:
     stdout("  Contrato (papel) do agente:")
-    for i, c in enumerate(CONTRACTS, 1):
+    for i, c in enumerate(AUX_CONTRACTS, 1):
         stdout(f"    {i}. {c['titulo']} — {c['resumo']}")
-    default_idx = next(i for i, c in enumerate(CONTRACTS, 1) if c["key"] == DEFAULT_AUX_CONTRACT)
+    default_idx = next(i for i, c in enumerate(AUX_CONTRACTS, 1) if c["key"] == DEFAULT_AUX_CONTRACT)
     escolha = _ask("Contrato", str(default_idx), stdin, stdout,
-                   validate=lambda v: v.isdigit() and 1 <= int(v) <= len(CONTRACTS),
+                   validate=lambda v: v.isdigit() and 1 <= int(v) <= len(AUX_CONTRACTS),
                    hint="Enter = desenvolvedor; o contrato completo vai para prompts/<nome>.md")
-    return CONTRACTS[int(escolha) - 1]
+    return AUX_CONTRACTS[int(escolha) - 1]
+
+
+def _list_models(command: str, kimi_cfg: Path | None = None) -> list[str]:
+    """Modelos válidos do harness: kimi (config do usuário) / opencode (CLI).
+
+    Falha ou harness desconhecido → [] (o wizard cai em texto livre).
+    """
+    if command == "kimi":
+        cfg = kimi_cfg or (Path.home() / ".kimi-code" / "config.toml")
+        try:
+            data = tomllib.loads(cfg.read_text(encoding="utf-8"))
+        except (OSError, tomllib.TOMLDecodeError):
+            return []
+        return sorted(data.get("models", {}).keys())
+    if command == "opencode":
+        import subprocess
+        try:
+            r = subprocess.run(["opencode", "models"], capture_output=True, text=True, timeout=10)
+        except (OSError, subprocess.TimeoutExpired):
+            return []
+        if r.returncode != 0:
+            return []
+        return [ln.strip() for ln in r.stdout.splitlines() if ln.strip()]
+    return []
 
 
 def _ask_windows(stdin, stdout, agents: list[AgentConfig]) -> dict[str, str]:
@@ -162,8 +186,18 @@ def _collect_config(stdin, stdout) -> Config:
             command = _ask("Comando (kimi/opencode/claude)", command, stdin, stdout,
                            hint="binário do harness — deve existir no PATH")
         contract = _contract_by_key(LEADER_CONTRACT) if i == 0 else _ask_contract(stdin, stdout)
-        model = _ask("Modelo (opcional — ex.: k3; vazio = não passar --model)", "", stdin, stdout,
-                     hint="vazio = não passar --model (usa o default do harness)")
+        models = _list_models(command)
+        if models:
+            stdout("  Modelos disponíveis:")
+            for mi, m in enumerate(models, 1):
+                stdout(f"    {mi}. {m}")
+            escolha = _ask("Modelo (número; Enter = não passar --model)", "", stdin, stdout,
+                           validate=lambda v: v == "" or (v.isdigit() and 1 <= int(v) <= len(models)),
+                           hint="Enter = default do harness")
+            model = models[int(escolha) - 1] if escolha else ""
+        else:
+            model = _ask("Modelo (opcional — ex.: k3; vazio = não passar --model)", "", stdin, stdout,
+                         hint="vazio = não passar --model (usa o default do harness)")
         args = ["--model", model] if model else []
         if command == "opencode":
             args.append("--auto")
