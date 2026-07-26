@@ -1166,16 +1166,14 @@ class AppearanceTest(unittest.TestCase):
         self.assertIn(agent_color("dev-1"), AGENT_PALETTE)
 
     def test_up_configura_bordas_status_e_hooks(self):
-        from unittest.mock import patch
-        with patch("sac.commands._git_branch", return_value="main"):
-            rc = cmd_up(self.cfg, self.store, self.tmux, self.root, boot_wait=0)
+        rc = cmd_up(self.cfg, self.store, self.tmux, self.root, boot_wait=0)
         self.assertEqual(rc, 0)
         calls = self.runner.calls
         setopts = [" ".join(c) for c in calls if c[1] == "set-option"]
         self.assertTrue(any("pane-border-status" in s and "top" in s for s in setopts),
                         "borda com status no topo")
-        self.assertTrue(any("pane-border-format" in s and "dev-1" in s for s in setopts),
-                        "borda com label do agente")
+        self.assertTrue(any("pane-border-format" in s and "{@agent}" in s for s in setopts),
+                        "borda com #{@agent} no harness")
         self.assertTrue(any("@agent_color" in s for s in setopts),
                         "cor do agente gravada como pane option")
         self.assertTrue(any(" @agent leader" in s for s in setopts) and
@@ -1184,16 +1182,18 @@ class AppearanceTest(unittest.TestCase):
         right_full = next(s for s in setopts if "status-right" in s)
         self.assertIn("@agent", right_full,
                       "rodapé mostra @agent (imune à troca de pane_title pelo harness)")
-        self.assertTrue(any("status-left" in s and "main" in s for s in setopts),
-                        "status-left com branch git")
-        self.assertTrue(any("status-right" in s and "SAC" in s and "pane_title" in s
+        self.assertTrue(any("status-left" in s and "session_name" in s for s in setopts),
+                        "status-left com session_name (sem branch)")
+        self.assertTrue(any("status-right" in s and "SAC" in s and "{@agent}" in s
                             for s in setopts),
-                        "status-right com agente focado e versão")
+                        "status-right com @agent e versão")
         right = next(s for s in setopts if "status-right" in s)
         self.assertNotIn("MouseDrag", right)
         self.assertNotIn("S-C-v", right)
-        self.assertIn("#S:#W", right)
+        self.assertNotIn("#S:#W", right, "v20 remove #S:#W do status-right")
         self.assertIn("sac status --mini", right)
+        self.assertIn("date +\"%d/%m %a %H:%M\"", right,
+                      "data no formato brasileiro com dia da semana")
         self.assertTrue(any(c[1] == "set-option" and "window-status-format" in c and c[-1] == ""
                             for c in calls),
                         "lista de windows suprimida")
@@ -1216,6 +1216,80 @@ class AppearanceTest(unittest.TestCase):
         self.assertFalse(any("after-select-pane" in h for h in hooks) and
                          any("client-resized" in h and "@pane_role" in h for h in hooks),
                          "hook do grid não aparece no legado")
+
+    # -- v20: Status bar v3 --
+    def test_status_left_v3_sem_lista_janelas(self):
+        """1.1 status-left contém modo + session_name, sem #S:#W"""
+        rc = cmd_up(self.cfg, self.store, self.tmux, self.root, boot_wait=0)
+        self.assertEqual(rc, 0)
+        setopts = [" ".join(c) for c in self.runner.calls if c[1] == "set-option"]
+        sl = next(s for s in setopts if "status-left" in s)
+        self.assertIn("session_name", sl)
+        self.assertNotIn("#S:#W", sl, "sem referência a session:window")
+        self.assertNotIn("#W", sl, "sem referência a window name")
+
+    def test_status_right_v3_sem_dicas_estaticas(self):
+        """1.2 status-right com @agent, SAC, date formatado; sem dicas"""
+        rc = cmd_up(self.cfg, self.store, self.tmux, self.root, boot_wait=0)
+        self.assertEqual(rc, 0)
+        setopts = [" ".join(c) for c in self.runner.calls if c[1] == "set-option"]
+        sr = next(s for s in setopts if "status-right" in s)
+        self.assertIn("{@agent}", sr)
+        self.assertIn("SAC", sr)
+        self.assertIn("sac status --mini", sr)
+        self.assertIn('date +"%d/%m %a %H:%M"', sr)
+        self.assertNotIn("MouseDrag", sr)
+        self.assertNotIn("#S:#W", sr)
+        self.assertNotIn("#W", sr)
+
+    # -- v20: Pane-border-format com @agent --
+    def test_pane_border_format_agent_var(self):
+        """2.1 pane-border-format usa #{@agent} em panes de harness"""
+        rc = cmd_up(self.cfg, self.store, self.tmux, self.root, boot_wait=0)
+        self.assertEqual(rc, 0)
+        setopts = [" ".join(c) for c in self.runner.calls if c[1] == "set-option"]
+        agent_pbf = [s for s in setopts if "pane-border-format" in s and "{@agent}" in s]
+        self.assertGreaterEqual(len(agent_pbf), 2,
+                                "leader e dev-1 têm pane-border-format com #{@agent}")
+
+    def test_sidebar_border_format_vazio(self):
+        """2.2 sidebar mantém pane-border-format vazio (sem label na moldura)"""
+        rc = cmd_up(self.cfg, self.store, self.tmux, self.root, boot_wait=0)
+        self.assertEqual(rc, 0)
+        calls = self.runner.calls
+        # sidebar panes recebem pane-border-format="" em _mark_sidebar_pane
+        sidebar_border = [c for c in calls if c[1] == "set-option"
+                          and "pane-border-format" in c and len(c) > 2 and c[-1] == ""]
+        self.assertGreaterEqual(len(sidebar_border), 2,
+                                "cada sidebar recebe formato vazio (leader, dev-1)")
+
+    def test_active_pane_hook_realce(self):
+        """2.4 after-select-pane hook com @agent_color para realce do ativo"""
+        rc = cmd_up(self.cfg, self.store, self.tmux, self.root, boot_wait=0)
+        self.assertEqual(rc, 0)
+        hooks = [" ".join(c) for c in self.runner.calls if c[1] == "set-hook"]
+        self.assertTrue(any("after-select-pane" in h and "@agent_color" in h for h in hooks),
+                        "hook de realce do pane ativo via @agent_color")
+
+    def test_window_options_usam_escopo_global(self):
+        """window-scoped (pane-border-status, pane-border-lines, window-status-*) usam -g"""
+        rc = cmd_up(self.cfg, self.store, self.tmux, self.root, boot_wait=0)
+        self.assertEqual(rc, 0)
+        calls = self.runner.calls
+        so = [c for c in calls if c[1] == "set-option"]
+        for opt in ("pane-border-status", "pane-border-lines",
+                    "window-status-format", "window-status-current-format"):
+            targets = [c for c in so if opt in c]
+            self.assertGreater(len(targets), 0, f"{opt} deve ter ao menos 1 chamada")
+            for c in targets:
+                self.assertEqual(c[2], "-g",
+                                 f"{opt} deve usar flag -g (não -t sessão)")
+        # mouse permanece session scoped (-t sessão)
+        mouse_calls = [c for c in so if "mouse" in c and c[-1] == "on"]
+        self.assertGreater(len(mouse_calls), 0, "mouse on deve ter chamada")
+        for c in mouse_calls:
+            self.assertEqual(c[2], "-t",
+                             "mouse é session option, mantém -t <session>")
 
 
 class ProgressBarTest(unittest.TestCase):
