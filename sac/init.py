@@ -12,6 +12,7 @@ from .config import AgentConfig, Config
 from .contracts import (
     AUX_CONTRACTS, CONTRACTS, DEFAULT_AUX_CONTRACT, LEADER_CONTRACT, stack_canonica,
 )
+from .plugins import cmd_plugins as _cmd_plugins
 
 KIMI_NOTE = """- Kimi Code: respostas longas e analíticas.
 - O modelo é o que você configurou nos args do agente (ex.: `--model <alias/modelo>`).
@@ -388,8 +389,7 @@ def cmd_init(stdin=None, stdout=None, root: Path | None = None, is_interactive: 
         stdout("pronto!")
         stdout("")
         stdout("=== Plugins canônicos (superpowers, RTK, openspec) ===")
-        from .plugins import cmd_plugins
-        if cmd_plugins("install", stdout=stdout) != 0:
+        if _cmd_plugins("install", stdout=stdout) != 0:
             stdout("⚠ plugins não instalados — a esteira perde skills/RTK/openspec; "
                    "rode `sac plugins install` quando houver rede")
         _print_onboarding(stdout)

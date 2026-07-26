@@ -25,24 +25,6 @@ def _run_init(d, inputs, saida=None):
     return cmd_init(stdin=FakeInput(inputs), stdout=out, root=d, is_interactive=True)
 
 
-# v25b: por padrão a listagem de modelos é desativada nos testes (texto livre);
-# os testes da lista numerada re-patcheiam com seus próprios valores.
-_MODELS_PATCHER = patch("sac.init._list_models", return_value=[])
-# v27: o init instala os plugins canônicos automaticamente — mockado nos testes
-# (zero rede); testes específicos re-patcheiam para verificar a chamada.
-_PLUGINS_PATCHER = patch("sac.plugins.cmd_plugins", return_value=0)
-
-
-def setUpModule():
-    _MODELS_PATCHER.start()
-    _PLUGINS_PATCHER.start()
-
-
-def tearDownModule():
-    _MODELS_PATCHER.stop()
-    _PLUGINS_PATCHER.stop()
-
-
 # sequência base de 3 agentes (leader + dev-1 + dev-2), comandos no PATH mockado
 AGENTS3 = ["lead", "kimi", "", "",
            "dev-1", "opencode", "", "", "",
@@ -636,7 +618,7 @@ class InitOnboardingTest(unittest.TestCase):
         d = Path(tempfile.mkdtemp())
         inputs = ["sess", "", "8", "1", "lead", "kimi", "k3", "", "n"]
         saida = []
-        with patch("sac.plugins.cmd_plugins", return_value=0) as m:
+        with patch("sac.init._cmd_plugins", return_value=0) as m:
             rc = _run_init(d, inputs, saida)
         self.assertEqual(rc, 0)
         m.assert_called_once()
@@ -650,7 +632,7 @@ class InitOnboardingTest(unittest.TestCase):
         d = Path(tempfile.mkdtemp())
         inputs = ["sess", "", "8", "1", "lead", "kimi", "k3", "", "n"]
         saida = []
-        with patch("sac.plugins.cmd_plugins", return_value=1):
+        with patch("sac.init._cmd_plugins", return_value=1):
             rc = _run_init(d, inputs, saida)
         self.assertEqual(rc, 0, "falha de rede no install não aborta o init")
         texto = "\n".join(saida)
