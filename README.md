@@ -55,12 +55,17 @@ sac down                                    # stop everything: harnesses, daemon
   `·` idle, `*` focused), plus the last 5 comms events and tmux tips.
   `sac sidebar --watch` redraws in place; `sac sidebar --toggle` (bind
   `prefix+e`) opens/closes it in any window.
-- **Status bar**: mode (INPUT/KEY/COPY) + git branch on the left;
-  session:window, live agent summary (`#(sac status --mini)` → `2● 1!`),
-  focused agent, SAC version and date on the right.
+- **Status bar v3**: left shows only the tmux mode (`KEY`/`COPY`/`INPUT`) via
+  `#{?client_prefix,KEY,#{?pane_in_mode,COPY,INPUT}}` and the session name —
+  no window list (`#S:#W` removed). Right shows the focused agent (`#{@agent}`),
+  SAC version, live agent summary (`#(sac status --mini)` → `2● 1!`), and
+  Brazilian-formatted date (`dd/MM dow HH:MM`).
 - **Stable agent identity**: harness panes are tagged with the `@agent` pane
-  option at boot — sidebar and status bar never rely on `pane_title`, which
-  harnesses overwrite seconds after boot (kimi → "Kimi Code").
+  option at boot — sidebar, status bar, and pane borders never rely on
+  `pane_title`, which harnesses overwrite seconds after boot (kimi → "Kimi Code").
+  Each pane's top border (`pane-border-format`) displays the agent name in a
+  stable color derived from a hash of the name; the active pane is highlighted
+  via an `after-select-pane` hook.
 - **Full shutdown**: `sac down` kills every harness pane (in config order),
   terminates the daemon via pid file (SIGTERM → SIGKILL, even detached) and
   only then kills the tmux session.
