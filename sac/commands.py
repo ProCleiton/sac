@@ -138,11 +138,10 @@ def _session_env(store: Store, config_path: Path | None, agent: str | None = Non
 
 
 def _default_config_path(project_root: Path | None) -> Path | None:
-    """Config efetivo do workspace: `.sac/sac.toml` quando existe, senão o legado."""
+    """Config efetivo do workspace: sempre `.sac/sac.toml` (legado ignorado desde a v25)."""
     if project_root is None:
         return None
-    hidden = project_root / ".sac" / "sac.toml"
-    return hidden if hidden.is_file() else project_root / "sac.toml"
+    return project_root / ".sac" / "sac.toml"
 
 
 def cmd_kill(cfg: Config, store: Store, tmux: Tmux, project_root: Path | None,
@@ -1071,8 +1070,13 @@ def cmd_doctor(config_path: Path | None, stdout=print, which=None, tmux_version=
                "npm i -g @fission-ai/openspec (ou equivalente)")
 
     if config_path is None:
-        stdout("[WARN] config not found (--config, $SAC_CONFIG, ./.sac/sac.toml, ./sac.toml) "
-               "— checagens dependentes puladas")
+        base0 = Path(cwd) if cwd is not None else Path(".")
+        if (base0 / "sac.toml").is_file():
+            stdout("[WARN] ./sac.toml existe na raiz mas é ignorado (fallback removido) — "
+                   "mova para .sac/ ou apague — checagens dependentes puladas")
+        else:
+            stdout("[WARN] config not found (--config, $SAC_CONFIG, ./.sac/sac.toml) "
+                   "— checagens dependentes puladas")
         return 1 if failed else 0
     config_path = Path(config_path)
     if not config_path.exists():
@@ -1091,7 +1095,8 @@ def cmd_doctor(config_path: Path | None, stdout=print, which=None, tmux_version=
     hidden = base / ".sac" / "sac.toml"
     legacy = base / "sac.toml"
     if hidden.is_file() and legacy.is_file() and config_path.resolve() == hidden.resolve():
-        stdout("[WARN] config ambíguo: ./sac.toml também existe — usando .sac/sac.toml (o .sac/ vence)")
+        stdout("[WARN] ./sac.toml existe na raiz mas é ignorado (fallback removido) — "
+               "mova para .sac/ ou apague")
 
     if cfg.socket:
         parent = Path(cfg.socket).expanduser().parent

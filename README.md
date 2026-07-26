@@ -105,9 +105,9 @@ prompts, the `sac init` wizard, and every-day commands.
 - **Session environment**: every pane (harness, sidebar, dash) receives
   `SAC_ROOT=<raiz do store>` and `SAC_CONFIG=<caminho absoluto do sac.toml>`.
   Config resolution order: `--config` flag → `$SAC_CONFIG` → `./.sac/sac.toml`
-  (current default) → `./sac.toml` (legacy fallback — old workspaces keep
-  working unchanged). `sac` commands inside panes always resolve the correct
-  session regardless of cwd.
+  (legacy `./sac.toml` is **ignored** since v25 — migrate with
+  `mkdir -p .sac && mv sac.toml .sac/`). `sac` commands inside panes always
+  resolve the correct session regardless of cwd.
 - **Boot progress & fail-fast**: `sac up` shows per-agent progress
   (`[3/8] agent: creating window... waiting 12s for prompt...`) with
   elapsed-time-aware waiting. Socket directory is auto-created. Critical
@@ -134,7 +134,7 @@ prompts, the `sac init` wizard, and every-day commands.
   log.jsonl) plus the tmux session. Crash of SAC or the daemon takes nothing
   down; `sac up` is idempotent.
 - **Configuration**: `.sac/sac.toml` declares exactly one leader, the
-  auxiliaries and named loops (legacy `./sac.toml` still loads via fallback).
+  auxiliaries and named loops (legacy `./sac.toml` is ignored since v25).
   The session-level `boot_wait` (default 8s) controls how long
   `sac up` waits before injecting prompts — individual agents can override it
   with `[[agents]] boot_wait = N`. Session geometry is set via `[session]
