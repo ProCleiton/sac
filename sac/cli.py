@@ -19,13 +19,14 @@ from .store import Store, StoreError
 from .tmux import Tmux, TmuxError
 
 CONFIG_HIDDEN = Path(".sac") / "sac.toml"
-CONFIG_LEGACY = Path("sac.toml")
+CONFIG_LEGACY = Path("sac.toml")  # ignorado na descoberta (v25) — só para mensagens
 
 
 def resolve_config_path(args_config: str | None) -> Path | None:
-    """Cadeia de descoberta: --config > $SAC_CONFIG > ./.sac/sac.toml > ./sac.toml.
+    """Cadeia de descoberta: --config > $SAC_CONFIG > ./.sac/sac.toml.
 
     Retorna o primeiro caminho existente, ou None se nenhum existir.
+    `./sac.toml` na raiz (legado) NÃO é considerado desde a v25.
     """
     if args_config:
         return Path(args_config)
@@ -34,8 +35,6 @@ def resolve_config_path(args_config: str | None) -> Path | None:
         return Path(env)
     if CONFIG_HIDDEN.is_file():
         return CONFIG_HIDDEN
-    if CONFIG_LEGACY.is_file():
-        return CONFIG_LEGACY
     return None
 
 
@@ -130,8 +129,13 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_uninstall(root, cfg, tmux)
 
     if cfg_path is None:
-        print("erro: config não encontrado — caminhos tentados: --config, $SAC_CONFIG, "
-              "./.sac/sac.toml, ./sac.toml — rode `sac init` para criar um", file=sys.stderr)
+        if CONFIG_LEGACY.is_file():
+            print("erro: ./sac.toml na raiz não é mais lido (fallback removido) — "
+                  "migre com: mkdir -p .sac && mv sac.toml .sac/ — ou rode `sac init`",
+                  file=sys.stderr)
+        else:
+            print("erro: config não encontrado — caminhos tentados: --config, $SAC_CONFIG, "
+                  "./.sac/sac.toml — rode `sac init` para criar um", file=sys.stderr)
         return 1
     cfg_path = cfg_path.resolve()
     try:

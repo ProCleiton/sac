@@ -196,10 +196,11 @@ class ResolveConfigPathTest(unittest.TestCase):
         with _cwd(self.d), _sem_sac_config():
             self.assertEqual(resolve_config_path(None), Path(".sac") / "sac.toml")
 
-    def test_fallback_legado(self):
+    def test_legado_so_na_raiz_e_ignorado(self):
         (self.d / "sac.toml").write_text("x", encoding="utf-8")
         with _cwd(self.d), _sem_sac_config():
-            self.assertEqual(resolve_config_path(None), Path("sac.toml"))
+            self.assertIsNone(resolve_config_path(None),
+                              "fallback legado removido na v25")
 
     def test_nenhum_config_retorna_none(self):
         with _cwd(self.d), _sem_sac_config():
@@ -229,20 +230,23 @@ class ConfigDiscoveryCliTest(unittest.TestCase):
         self.assertEqual(len(store.pending("dev-1")), 1,
                          "estado deve ficar em <workspace>/.sac, não em .sac/.sac")
 
-    def test_comando_usa_fallback_legado(self):
+    def test_comando_com_so_legado_erro_e_orienta_migracao(self):
         (self.d / "sac.toml").write_text(VALID, encoding="utf-8")
+        err = StringIO()
         with _cwd(self.d), _sem_sac_config():
-            rc = main(["send", "dev-1", "tarefa"])
-        self.assertEqual(rc, 0)
-        store = Store(self.d)
-        self.assertEqual(len(store.pending("dev-1")), 1)
+            with patch.object(sys, "stderr", err):
+                rc = main(["status"])
+        self.assertEqual(rc, 1, "legado na raiz não é mais carregado")
+        self.assertIn("fallback removido", err.getvalue())
+        self.assertIn("mv sac.toml .sac/", err.getvalue())
 
     def test_uninstall_via_cli(self):
         (self.d / "sac.toml").write_text(VALID, encoding="utf-8")
         (self.d / "prompts").mkdir()
         (self.d / ".sac").mkdir()
         with _cwd(self.d), _sem_sac_config():
-            with patch("builtins.input", return_value="sac-cli-test"):
+            # workspace só-legado: config não é carregado (v25) — token cai para "sac"
+            with patch("builtins.input", return_value="sac"):
                 rc = main(["uninstall"])
         self.assertEqual(rc, 0)
         self.assertFalse((self.d / "sac.toml").exists())

@@ -53,8 +53,9 @@ Prerequisites: Python 3 and tmux.
 
 Everything starts from a single config file. Since v24 the default location is
 `.sac/sac.toml` (inside the hidden state directory); a legacy `./sac.toml` at
-the workspace root still works — resolution order is `--config` flag →
-`$SAC_CONFIG` → `./.sac/sac.toml` → `./sac.toml`. Four sections:
+the workspace root is **ignored** since v25 — resolution order is `--config`
+flag → `$SAC_CONFIG` → `./.sac/sac.toml`. To migrate an old workspace:
+`mkdir -p .sac && mv sac.toml .sac/`. Four sections:
 
 ### 3.1 `[session]` — the tmux session
 

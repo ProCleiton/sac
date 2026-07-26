@@ -54,8 +54,9 @@ Pré-requisitos: Python 3 e tmux.
 
 Tudo parte de um único arquivo de configuração. Desde a v24 o local padrão é
 `.sac/sac.toml` (dentro do diretório oculto de estado); um `sac.toml` legado na
-raiz do workspace continua funcionando — a ordem de descoberta é: flag
-`--config` → `$SAC_CONFIG` → `./.sac/sac.toml` → `./sac.toml`. Quatro seções:
+raiz do workspace é **ignorado** desde a v25 — a ordem de descoberta é: flag
+`--config` → `$SAC_CONFIG` → `./.sac/sac.toml`. Para migrar um workspace
+antigo: `mkdir -p .sac && mv sac.toml .sac/`. Quatro seções:
 
 ### 3.1 `[session]` — a sessão tmux
 

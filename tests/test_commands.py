@@ -314,12 +314,12 @@ class UpDownStatusTest(unittest.TestCase):
         self.assertIn(f"SAC_CONFIG={self.root / '.sac' / 'sac.toml'}", ns,
                       "SAC_CONFIG deve apontar para o config oculto efetivamente usado")
 
-    def test_up_exporta_sac_config_legado_quando_nao_ha_oculto(self):
+    def test_up_exporta_sempre_sac_config_oculto(self):
         rc = cmd_up(self.cfg, self.store, self.tmux, self.root, boot_wait=0, config_path=None)
         self.assertEqual(rc, 0)
         ns = str(next(c for c in self.runner.calls if c[1] == "new-session"))
-        self.assertIn(f"SAC_CONFIG={self.root / 'sac.toml'}", ns)
-        self.assertNotIn(".sac/sac.toml", ns)
+        self.assertIn(f"SAC_CONFIG={self.root / '.sac' / 'sac.toml'}", ns,
+                      "v25: SAC_CONFIG aponta sempre para o config oculto")
 
     def test_down_kills_existing_session(self):
         t = Tmux("sac-test", runner=FakeRunner(rc=0))
@@ -1619,24 +1619,24 @@ class DoctorTest(unittest.TestCase):
         self.assertEqual(rc, 0)
         self.assertIn(f"config loads ({self.d / 'sac.toml'}", out)
 
-    def test_config_ambiguo_warn(self):
+    def test_legado_na_raiz_warn_ignorado(self):
         (self.d / ".sac").mkdir()
         (self.d / ".sac" / "sac.toml").write_text(VALID, encoding="utf-8")
         rc, out = self._run(config_path=self.d / ".sac" / "sac.toml", cwd=self.d)
-        self.assertEqual(rc, 0, "ambiguidade é warning, não falha")
+        self.assertEqual(rc, 0, "legado ignorado é warning, não falha")
         self.assertIn("config loads", out)
         self.assertIn(".sac/sac.toml", out.split("config loads")[1].splitlines()[0],
                       "deve indicar que o arquivo usado é o oculto")
         self.assertIn("[WARN]", out)
-        self.assertIn("ambíguo", out)
+        self.assertIn("ignorado", out)
 
-    def test_sem_ambiguidade_sem_warn(self):
+    def test_sem_legado_sem_warn(self):
         (self.d / ".sac").mkdir()
         (self.d / ".sac" / "sac.toml").write_text(VALID, encoding="utf-8")
         (self.d / "sac.toml").unlink()
         rc, out = self._run(config_path=self.d / ".sac" / "sac.toml", cwd=self.d)
         self.assertEqual(rc, 0)
-        self.assertNotIn("ambíguo", out)
+        self.assertNotIn("ignorado", out)
 
     def test_openspec_ausente_warn(self):
         rc, out = self._run(which=lambda cmd: None if cmd == "openspec" else f"/usr/bin/{cmd}")
@@ -1654,6 +1654,12 @@ class DoctorTest(unittest.TestCase):
         self.assertEqual(rc, 0)
         self.assertIn("[WARN] config", out)
         self.assertIn("[OK]  openspec", out, "openspec é checado mesmo sem config")
+
+    def test_sem_config_mas_legado_na_raiz_orienta_migracao(self):
+        rc, out = self._run(config_path=None, cwd=self.d)
+        self.assertEqual(rc, 0)
+        self.assertIn("ignorado", out)
+        self.assertIn("mova para .sac/", out)
 
 
 class UninstallTest(unittest.TestCase):
