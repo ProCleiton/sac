@@ -1,7 +1,7 @@
 # Config
 
 ## Purpose
-Arquivo de configuração `sac.toml` no formato TOML usando `tomllib` da stdlib Python (3.11+). Define a sessão tmux, os agentes participantes e os loops de trabalho declarados. As mesmas configurações de temporização (`notify_interval`, `poke_stale_after`) são usadas pelo daemon de mensageria. Validações: nomes únicos, exatamente um leader, referências de loop válidas.
+Arquivo de configuração `sac.toml` no formato TOML usando `tomllib` da stdlib Python (3.11+). Define a sessão tmux e os agentes participantes. As mesmas configurações de temporização (`notify_interval`, `poke_stale_after`) são usadas pelo daemon de mensageria. Validações: nomes únicos, exatamente um leader.
 ## Requirements
 ### Requirement: Configuração de sessão tmux
 O sistema SHALL ler parâmetros da sessão tmux a partir de `[session]` no `sac.toml`.
@@ -57,24 +57,6 @@ Exatamente um agente SHALL ter `role = "leader"`.
 - **WHEN** o arquivo é carregado
 - **THEN** o sistema rejeita com erro
 
-### Requirement: Declaração de loops
-O sistema SHALL aceitar loops de trabalho declarados em `[[loops]]`, com sequência de agentes e limite de iterações.
-
-#### Scenario: Loop completo
-- **GIVEN** `[[loops]]` com `name`, `sequence[]` e `max_iterations`
-- **WHEN** o arquivo é carregado
-- **THEN** `name` é o identificador, `sequence` é a lista ordenada de agentes, `max_iterations` é o limite máximo
-
-#### Scenario: Loop sem max_iterations
-- **GIVEN** `[[loops]]` sem `max_iterations`
-- **WHEN** o arquivo é carregado
-- **THEN** o default `max_iterations=3` é aplicado
-
-#### Scenario: Agente desconhecido no loop
-- **GIVEN** `[[loops]]` com `sequence` contendo um nome de agente que não existe em `[[agents]]`
-- **WHEN** o arquivo é carregado
-- **THEN** o sistema rejeita com erro de validação
-
 ### Requirement: Acesso programático a agentes
 O sistema SHALL expor métodos para lookup de agente por nome e acesso ao leader.
 
@@ -93,11 +75,10 @@ criado se necessário).
 
 #### Scenario: Template gerado com valores do questionário
 - **GIVEN** valores fornecidos pelo usuário: nome="minha-esteira", leader="lead",
-  workers=["dev-1","auditor"], loop="dev-review"
+  workers=["dev-1","auditor"]
 - **WHEN** `sac init` gera o arquivo
 - **THEN** o TOML em `.sac/sac.toml` contém `[session] name = "minha-esteira"`
 - **AND** `[[agents]]` para cada worker com os campos fornecidos
-- **AND** `[[loops]]` com o loop declarado
 - **AND** o TOML é válido (parseável por `load_config`)
 
 #### Scenario: Template com janelas agrupadas
@@ -106,9 +87,9 @@ criado se necessário).
 - **THEN** o TOML contém `[windows]` com as janelas declaradas
 
 #### Scenario: Template sem loops
-- **GIVEN** usuário não declara loops
+- **GIVEN** qualquer resposta do questionário
 - **WHEN** `sac init` gera o arquivo
-- **THEN** o TOML não contém seção `[[loops]]`
+- **THEN** o TOML nunca contém seção `[[loops]]` (seção removida na v26b)
 
 ### Requirement: Seção session com root opcional
 O sistema SHALL aceitar campo `root` opcional na seção `[session]` do `sac.toml`
@@ -222,7 +203,7 @@ pós-criação.
 - **THEN** antes da pergunta exibe uma linha de hint explicando o propósito
   (ex.: "nome para a sessão tmux — usado para attach e identify")
 - **AND** o mesmo se aplica a todas as perguntas do questionário (socket,
-  boot_wait, nome do agente, comando, papel, modelo, loops)
+  boot_wait, nome do agente, comando, contrato, modelo, janelas)
 
 #### Scenario: Init valida command com shutil.which
 
@@ -311,4 +292,15 @@ para eliminar dúvidas comuns de usuários iniciantes. A seção SHALL cobrir:
 - **THEN** o texto afirma que plugins e skills globais/de projeto funcionam sem
   configuração extra no SAC
 - **AND** menciona que o `prompt_file` é uma mensagem, não substitui config
+
+### Requirement: Config com seção loops é rejeitada
+O sistema SHALL rejeitar com `ConfigError` claro um config que contenha a
+seção `[[loops]]` (removida na v26b), orientando a remoção da seção e a
+delegação via contrato do líder.
+
+#### Scenario: config com loops falha com orientação
+- **GIVEN** um `sac.toml` contendo `[[loops]]`
+- **WHEN** `load_config` é executado
+- **THEN** `ConfigError` informa que loops foram removidos e orienta remover a
+  seção
 

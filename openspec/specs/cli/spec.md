@@ -177,16 +177,8 @@ O sistema SHALL exibir um painel lateral com o estado atual dos agentes.
 
 #### Scenario: sidebar — painel de estado
 - **WHEN** `sac sidebar` é executado
-- **THEN** o sistema renderiza: agentes com marcadores de estado (idle, inbox, working), atalhos C-b <N>, e loops declarados
+- **THEN** o sistema renderiza: agentes com marcadores de estado (idle, inbox, working) e atalhos C-b <N>
 - **AND** é usado internamente nos panes de sidebar de cada janela (loop `clear; sac sidebar; sleep 5`)
-
-### Requirement: Execução de loops declarados
-O sistema SHALL permitir iniciar um ciclo de trabalho pré-declarado no `sac.toml`.
-
-#### Scenario: run — iniciar loop
-- **WHEN** `sac run <loop> "<tarefa>"` é executado
-- **THEN** uma mensagem com prefixo `[loop <nome>]` é enviada ao primeiro agente da sequência do loop
-- **AND** o fluxo subsequente é guiado pelos prompts de contrato (não enforced pelo SAC)
 
 ### Requirement: Comando kill para reinicialização de harness
 O sistema SHALL expor o comando `sac kill <agente>` para reiniciar o harness de um agente travado, preservando a estrutura da janela e as mensagens pending/claimed.
@@ -227,7 +219,6 @@ documentação externa: toda pergunta tem hint com exemplo concreto.
 - **AND** o agente 1 é anunciado como leader/orquestrador (header + hint do papel) e NÃO recebe pergunta de papel nem de contrato
 - **AND** para cada agente 2+: nome, comando (default detectado no PATH — ver Requirement "Detecção de harness no init"), contrato via catálogo (ver Requirement "Catálogo de contratos canônicos"), modelo, boot_wait específico (hint com exemplo)
 - **AND** agentes 2+ são `aux` automaticamente (sem pergunta de papel)
-- **AND** loops opcionais (nome, sequência de agentes, max_iterations)
 - **AND** agrupamento opcional de janelas (ver Requirement "Agrupamento de janelas no init")
 - **AND** ao final, gera `.sac/sac.toml` e `prompts/*.md` com o contrato de cada agente
 - **AND** imprime checklist de próximos passos atualizado com os novos caminhos
@@ -346,7 +337,7 @@ alteram o exit code.
 [OK]  tmux 3.4
 [OK]  openspec found in PATH
 [OK]  socket dir ~/.sac-esteira is writable
-[OK]  config loads (.sac/sac.toml, 3 agents, 1 loop)
+[OK]  config loads (.sac/sac.toml, 3 agents)
 [WARN] harness 'kimi' not found in PATH (config may be for another machine)
 [WARN] ./sac.toml existe na raiz mas é ignorado (fallback removido) — mova para .sac/ ou apague
 ```
@@ -456,15 +447,20 @@ próprio) usado pelo `sac init`: líder/orquestrador, desenvolvedor, revisor de
 código, documentação, deploy/release, segurança e auxiliar genérico. Todo
 contrato inclui o protocolo de mensageria SAC (inbox/`sac next`/reply/
 `sac done`) mais a disciplina do papel, em texto puro que NÃO exige plugin ou
-CLI externo instalado. O agente 1 recebe o contrato de líder sem pergunta;
-agentes 2+ escolhem em lista numerada que EXCLUI o papel de líder (só pode
-haver um líder — o agente 1), com default "desenvolvedor". O contrato gerado
-em `prompts/<nome>.md` é editável pelo usuário depois do init.
+CLI externo instalado. O contrato de líder SHALL incluir disciplina de
+delegação e ciclo de revisão: decompor e delegar com `sac send`, cobrar
+revisão do trabalho dos auxiliares, iterar até convergir e escalar ao usuário
+só em bloqueio real (substitui os loops declarados, removidos na v26b). O
+agente 1 recebe o contrato de líder sem pergunta; agentes 2+ escolhem em lista
+numerada que EXCLUI o papel de líder (só pode haver um líder — o agente 1),
+com default "desenvolvedor". O contrato gerado em `prompts/<nome>.md` é
+editável pelo usuário depois do init.
 
 #### Scenario: agente 1 recebe contrato de líder sem pergunta
 - **GIVEN** o wizard configurando o agente 1
 - **WHEN** o init gera os prompts
 - **THEN** `prompts/<nome>.md` do agente 1 contém o contrato de líder/orquestrador
+- **AND** contém a disciplina de delegação e ciclo de revisão
 - **AND** nenhuma pergunta de catálogo foi feita para o agente 1
 
 #### Scenario: catálogo numerado para agentes aux

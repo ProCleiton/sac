@@ -31,6 +31,8 @@ criado se necessário).
 - **WHEN** `sac init` gera o arquivo
 - **THEN** o TOML nunca contém seção `[[loops]]` (seção removida na v26b)
 
+## ADDED Requirements
+
 ### Requirement: Config com seção loops é rejeitada
 O sistema SHALL rejeitar com `ConfigError` claro um config que contenha a
 seção `[[loops]]` (removida na v26b), orientando a remoção da seção e a

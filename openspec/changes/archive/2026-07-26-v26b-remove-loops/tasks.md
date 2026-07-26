@@ -20,7 +20,7 @@
 ## 4. Docs
 - [x] 4.1 README + beginner guides (en/pt-BR): remover referências a loops e
       `sac run`; registrar a breaking change
-- [ ] 4.2 Após o archive: corrigir a linha "Purpose" das specs config/cli
+- [x] 4.2 Após o archive: corrigir a linha "Purpose" das specs config/cli
       (mencionam loops)
 
 ## 5. Fechamento
