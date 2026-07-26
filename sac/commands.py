@@ -546,6 +546,9 @@ def cmd_up(cfg: Config, store: Store, tmux: Tmux, project_root: Path,
     leader_name = agents[0].name
     tmux.select_window(entry_window)
     tmux.select_pane(harness_ids[leader_name])
+    # memória de longo prazo: reescreve a seção do contrato do líder antes de injetar
+    from .memory import refresh_leader_prompt
+    refresh_leader_prompt(cfg, store.root, project_root)
     # boot wait + prompts (per-agent, com tempo decorrido)
     boot_start = time.monotonic()
     for agent in agents:

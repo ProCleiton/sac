@@ -15,6 +15,7 @@ from .commands import (
 from .config import ConfigError, load_config
 from .init import cmd_init
 from .daemon import run_daemon
+from .memory import cmd_memory
 from .store import Store, StoreError
 from .tmux import Tmux, TmuxError
 
@@ -100,6 +101,38 @@ def _build_parser() -> argparse.ArgumentParser:
     sub.add_parser("doctor", help="diagnóstico do ambiente (Python, tmux, socket, config, harnesses)")
     sub.add_parser("uninstall", help="remove .sac/, prompts/ e sac.toml legado do workspace (com confirmação)")
     sub.add_parser("daemon", help="daemon de mensageria (uso interno, sobe no dashboard)")
+
+    sp_mem = sub.add_parser("memory", help="memória de longo prazo (.sac/memory.db, SQLite)")
+    sp_mem.set_defaults(_help_parser=sp_mem)
+    msub = sp_mem.add_subparsers(dest="memory_command")
+    msp = msub.add_parser("remember", help="registra uma memória")
+    msp.add_argument("kind", help="tarefa, lição ou referência")
+    msp.add_argument("title")
+    msp.add_argument("-c", "--content", default="")
+    msp.add_argument("-t", "--tags", default="", help="tags separadas por espaço")
+    msp.add_argument("-i", "--importance", type=int, default=3, help="1-5 (default: 3)")
+    msp = msub.add_parser("recall", help="consulta a memória (FTS5 ou cronológico)")
+    msp.add_argument("query", nargs="?", default=None)
+    msp.add_argument("--kind", default=None)
+    msp.add_argument("--limit", type=int, default=10)
+    msp.add_argument("--all", action="store_true", help="inclui arquivadas")
+    msp = msub.add_parser("revise", help="revisa uma memória (a antiga fica superada)")
+    msp.add_argument("id", type=int)
+    msp.add_argument("-t", "--title", default=None)
+    msp.add_argument("-c", "--content", default=None)
+    msp.add_argument("-i", "--importance", type=int, default=None)
+    msp = msub.add_parser("forget", help="arquiva uma memória (soft-delete)")
+    msp.add_argument("id", type=int)
+    msp = msub.add_parser("restore", help="desarquiva uma memória")
+    msp.add_argument("id", type=int)
+    msp = msub.add_parser("decay", help="arquiva memórias velhas sem uso (poda determinística)")
+    msp.add_argument("--days", type=int, default=30)
+    msp.add_argument("--dry-run", action="store_true")
+    msp = msub.add_parser("export", help="exporta a memória em Markdown")
+    msp.add_argument("--all", action="store_true", help="inclui arquivadas")
+    msp.add_argument("--history", action="store_true", help="mostra a auditoria (history)")
+    msp = msub.add_parser("pack", help="imprime o bloco de injeção no contrato do líder")
+    msp.add_argument("--budget", type=int, default=4000, help="orçamento em caracteres")
     return p
 
 
@@ -195,6 +228,8 @@ def main(argv: list[str] | None = None) -> int:
                 return 0
             case "kill":
                 return cmd_kill(cfg, store, tmux, project_root, args.agent, config_path=cfg_path)
+            case "memory":
+                return cmd_memory(cfg, store, project_root, args, os.environ)
             case "daemon":
                 return run_daemon(cfg, store, tmux)
     except (ConfigError, StoreError) as e:
