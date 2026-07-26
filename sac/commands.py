@@ -137,6 +137,14 @@ def _session_env(store: Store, config_path: Path | None, agent: str | None = Non
     return env
 
 
+def _default_config_path(project_root: Path | None) -> Path | None:
+    """Config efetivo do workspace: `.sac/sac.toml` quando existe, senão o legado."""
+    if project_root is None:
+        return None
+    hidden = project_root / ".sac" / "sac.toml"
+    return hidden if hidden.is_file() else project_root / "sac.toml"
+
+
 def cmd_kill(cfg: Config, store: Store, tmux: Tmux, project_root: Path | None,
              agent_name: str, boot_wait: float | None = None,
              config_path: Path | None = None) -> int:
@@ -154,7 +162,7 @@ def cmd_kill(cfg: Config, store: Store, tmux: Tmux, project_root: Path | None,
     if pid:
         tmux.kill_pane(pid)
     agent = cfg.agent(agent_name)
-    _cfg_path = config_path or (project_root / "sac.toml" if project_root else None)
+    _cfg_path = config_path or _default_config_path(project_root)
     harness_id = tmux.split_window(sidebar_id, [agent.command, *agent.args],
                                     env=_session_env(store, _cfg_path, agent.name), full=revive)
     tmux.resize_pane(sidebar_id, SIDEBAR_WIDTH)
@@ -521,7 +529,7 @@ def cmd_up(cfg: Config, store: Store, tmux: Tmux, project_root: Path,
     total = len(agents)
     use_bar = stdout is None and sys.stdout.isatty()
     prog = _Progress(total * 2 + 1, enabled=use_bar)
-    env_base = _session_env(store, config_path or (project_root / "sac.toml"))
+    env_base = _session_env(store, config_path or _default_config_path(project_root))
 
     def _notify(label: str) -> None:
         if use_bar:
@@ -976,8 +984,53 @@ def cmd_log(store: Store, follow: bool = False) -> int:
     return 0
 
 
-def cmd_doctor(config_path: Path, stdout=print, which=None, tmux_version=None,
-               py_version=None) -> int:
+def cmd_uninstall(root: Path, cfg: Config | None, tmux: Tmux | None = None,
+                  stdin=None, stdout=None) -> int:
+    """Remove a configuração do SAC no workspace: .sac/, prompts/ e sac.toml legado.
+
+    Recusa se a sessão tmux estiver no ar; exige digitar o nome da sessão.
+    Nada fora do diretório do workspace é tocado.
+    """
+    import shutil
+
+    stdin = stdin or input
+    stdout = stdout or print
+    root = Path(root)
+
+    if cfg is not None and tmux is not None and tmux.has_session():
+        stdout(f"erro: sessão '{cfg.session_name}' no ar — rode `sac down` antes de desinstalar")
+        return 1
+
+    targets = [p for p in (root / ".sac", root / "prompts", root / "sac.toml") if p.exists()]
+    if not targets:
+        stdout("nada para remover — SAC não está configurado neste workspace")
+        return 0
+
+    stdout("os seguintes itens serão removidos:")
+    for t in targets:
+        stdout(f"  {t}")
+    token = cfg.session_name if cfg is not None else "sac"
+    stdout(f"para confirmar, digite o nome da sessão ({token}): ")
+    try:
+        answer = stdin()
+    except (EOFError, KeyboardInterrupt):
+        stdout("uninstall cancelado — nada removido")
+        return 0
+    if answer.strip() != token:
+        stdout("confirmação não confere — nada removido")
+        return 0
+
+    for t in targets:
+        if t.is_dir():
+            shutil.rmtree(t)
+        else:
+            t.unlink()
+    stdout("removido — nada fora do workspace foi tocado")
+    return 0
+
+
+def cmd_doctor(config_path: Path | None, stdout=print, which=None, tmux_version=None,
+               py_version=None, cwd: Path | None = None) -> int:
     """Diagnóstico read-only do ambiente: Python, tmux, socket, config, harnesses.
 
     Exit 0 se todos os itens essenciais OK; 1 se algum essencial falhar.
@@ -1011,6 +1064,16 @@ def cmd_doctor(config_path: Path, stdout=print, which=None, tmux_version=None,
             stdout(f"[FAIL] {ver} < 3.2 — upgrade tmux to 3.2+ (o layout grid exige)")
             failed = True
 
+    if which("openspec"):
+        stdout("[OK]  openspec found in PATH")
+    else:
+        stdout("[WARN] openspec not found in PATH — stack canônica: "
+               "npm i -g @fission-ai/openspec (ou equivalente)")
+
+    if config_path is None:
+        stdout("[WARN] config not found (--config, $SAC_CONFIG, ./.sac/sac.toml, ./sac.toml) "
+               "— checagens dependentes puladas")
+        return 1 if failed else 0
     config_path = Path(config_path)
     if not config_path.exists():
         stdout(f"[WARN] config not found ({config_path}) — checagens dependentes puladas")
@@ -1022,7 +1085,13 @@ def cmd_doctor(config_path: Path, stdout=print, which=None, tmux_version=None,
     except ConfigError as e:
         stdout(f"[FAIL] config inválida: {e}")
         return 1
-    stdout(f"[OK]  config loads ({len(cfg.agents)} agents, {len(cfg.loops)} loops)")
+    stdout(f"[OK]  config loads ({config_path}, {len(cfg.agents)} agents, {len(cfg.loops)} loops)")
+
+    base = Path(cwd) if cwd is not None else Path(".")
+    hidden = base / ".sac" / "sac.toml"
+    legacy = base / "sac.toml"
+    if hidden.is_file() and legacy.is_file() and config_path.resolve() == hidden.resolve():
+        stdout("[WARN] config ambíguo: ./sac.toml também existe — usando .sac/sac.toml (o .sac/ vence)")
 
     if cfg.socket:
         parent = Path(cfg.socket).expanduser().parent

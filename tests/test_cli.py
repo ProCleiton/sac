@@ -1,11 +1,31 @@
+import contextlib
 import os
+import sys
 import tempfile
 import unittest
+from io import StringIO
 from pathlib import Path
 from unittest.mock import patch
 
-from sac.cli import main
+from sac.cli import main, resolve_config_path
 from sac.store import Store
+
+
+@contextlib.contextmanager
+def _cwd(path):
+    old = os.getcwd()
+    os.chdir(path)
+    try:
+        yield
+    finally:
+        os.chdir(old)
+
+
+@contextlib.contextmanager
+def _sem_sac_config():
+    with patch.dict(os.environ):
+        os.environ.pop("SAC_CONFIG", None)
+        yield
 
 VALID = """
 [session]
@@ -153,3 +173,78 @@ class SacRootWiringTest(unittest.TestCase):
         with patch.dict(os.environ, {"SAC_CONFIG": "/caminho/inexistente.toml"}):
             rc = main(["--config", self.cfg_path, "status"])
         self.assertEqual(rc, 0)
+
+
+class ResolveConfigPathTest(unittest.TestCase):
+    def setUp(self):
+        self.d = Path(tempfile.mkdtemp())
+
+    def test_flag_tem_precedencia_sobre_env(self):
+        with patch.dict(os.environ, {"SAC_CONFIG": "/env.toml"}):
+            self.assertEqual(resolve_config_path("/flag.toml"), Path("/flag.toml"))
+
+    def test_env_tem_precedencia_sobre_diretorio(self):
+        (self.d / ".sac").mkdir()
+        (self.d / ".sac" / "sac.toml").write_text("x", encoding="utf-8")
+        with _cwd(self.d), patch.dict(os.environ, {"SAC_CONFIG": "/env.toml"}):
+            self.assertEqual(resolve_config_path(None), Path("/env.toml"))
+
+    def test_config_oculto_preferido_ao_legado(self):
+        (self.d / ".sac").mkdir()
+        (self.d / ".sac" / "sac.toml").write_text("x", encoding="utf-8")
+        (self.d / "sac.toml").write_text("x", encoding="utf-8")
+        with _cwd(self.d), _sem_sac_config():
+            self.assertEqual(resolve_config_path(None), Path(".sac") / "sac.toml")
+
+    def test_fallback_legado(self):
+        (self.d / "sac.toml").write_text("x", encoding="utf-8")
+        with _cwd(self.d), _sem_sac_config():
+            self.assertEqual(resolve_config_path(None), Path("sac.toml"))
+
+    def test_nenhum_config_retorna_none(self):
+        with _cwd(self.d), _sem_sac_config():
+            self.assertIsNone(resolve_config_path(None))
+
+
+class ConfigDiscoveryCliTest(unittest.TestCase):
+    def setUp(self):
+        self.d = Path(tempfile.mkdtemp())
+
+    def test_sem_config_erro_claro_e_sugere_init(self):
+        err = StringIO()
+        with _cwd(self.d), _sem_sac_config():
+            with patch.object(sys, "stderr", err):
+                rc = main(["status"])
+        self.assertEqual(rc, 1)
+        self.assertIn("sac init", err.getvalue())
+        self.assertIn(".sac/sac.toml", err.getvalue())
+
+    def test_comando_usa_config_oculto(self):
+        (self.d / ".sac").mkdir()
+        (self.d / ".sac" / "sac.toml").write_text(VALID, encoding="utf-8")
+        with _cwd(self.d), _sem_sac_config():
+            rc = main(["send", "dev-1", "tarefa"])
+        self.assertEqual(rc, 0)
+        store = Store(self.d)
+        self.assertEqual(len(store.pending("dev-1")), 1,
+                         "estado deve ficar em <workspace>/.sac, não em .sac/.sac")
+
+    def test_comando_usa_fallback_legado(self):
+        (self.d / "sac.toml").write_text(VALID, encoding="utf-8")
+        with _cwd(self.d), _sem_sac_config():
+            rc = main(["send", "dev-1", "tarefa"])
+        self.assertEqual(rc, 0)
+        store = Store(self.d)
+        self.assertEqual(len(store.pending("dev-1")), 1)
+
+    def test_uninstall_via_cli(self):
+        (self.d / "sac.toml").write_text(VALID, encoding="utf-8")
+        (self.d / "prompts").mkdir()
+        (self.d / ".sac").mkdir()
+        with _cwd(self.d), _sem_sac_config():
+            with patch("builtins.input", return_value="sac-cli-test"):
+                rc = main(["uninstall"])
+        self.assertEqual(rc, 0)
+        self.assertFalse((self.d / "sac.toml").exists())
+        self.assertFalse((self.d / "prompts").exists())
+        self.assertFalse((self.d / ".sac").exists())

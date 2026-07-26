@@ -1,4 +1,4 @@
-"""Questionário interativo para gerar sac.toml e prompts."""
+"""Questionário interativo para gerar .sac/sac.toml e prompts."""
 from __future__ import annotations
 
 import re
@@ -9,49 +9,7 @@ from pathlib import Path
 from typing import Callable
 
 from .config import AgentConfig, Config, LoopConfig
-
-LEADER_PROMPT = """# Papel: leader (SAC)
-
-Você é o leader de uma esteira coordenada pelo SAC. Tarefas aparecem
-automaticamente no seu terminal.
-
-## Contrato SAC (obrigatório)
-
-- Tarefas chegam diretamente — você não precisa rodar `sac next`.
-- Cada tarefa chega com cabeçalho `SAC <id> de <sender>:` na primeira linha.
-- Trabalhe na tarefa. Ao terminar:
-  1. Escreva `SAC_DONE` em uma linha separada.
-  2. Rode `sac done <id> "<resumo>"` (o `<id>` está no cabeçalho).
-- **Respostas** (mensagens que você recebe como retorno de uma tarefa que
-  delegou) são concluídas automaticamente — NÃO rode `sac done` nelas.
-- Para delegar a um auxiliar: `sac send <aux> "<tarefa>"`.
-- Para cobrar revisão: `sac send <aux> "<o que revisar>"`.
-- Para falar com o usuário: `sac send user "<mensagem>"`.
-
-## Notas do harness ({harness})
-{harness_note}
-"""
-
-AUX_PROMPT = """# Papel: aux (SAC)
-
-Você é um auxiliar da esteira SAC. Tarefas chegam automaticamente.
-
-## Contrato SAC (obrigatório)
-
-- Tarefas chegam diretamente no seu terminal com cabeçalho `SAC <id> de <sender>:`.
-- O `<remetente>` para `sac send` e o `<id>` para `sac done` vêm desse cabeçalho.
-- Trabalhe com TDD: teste que falha primeiro, depois implementação mínima.
-- Ao concluir:
-  1. Envie o resultado ao remetente com `sac send <remetente> "<resumo>"`.
-  2. Escreva `SAC_DONE`.
-  3. Rode `sac done <id> "<resumo>"`.
-- **Respostas** que você receber são concluídas automaticamente — NÃO rode
-  `sac done` nelas, apenas leia e aja.
-- Se o remetente for `user`, responda com `sac send user "<mensagem>".
-
-## Notas do harness ({harness})
-{harness_note}
-"""
+from .contracts import CONTRACTS, DEFAULT_AUX_CONTRACT, LEADER_CONTRACT
 
 KIMI_NOTE = """- Kimi Code: respostas longas e analíticas.
 - O modelo é o que você configurou nos args do agente (ex.: `--model <alias/modelo>`).
@@ -63,12 +21,7 @@ OPENCODE_NOTE = """- opencode: respostas diretas e código.
 - Prefira `ask` para consultas e `edit/write` para alterações.
 """
 
-PROMPT_TEMPLATES = {
-    "leader": LEADER_PROMPT,
-    "aux": AUX_PROMPT,
-    "kimi": KIMI_NOTE,
-    "opencode": OPENCODE_NOTE,
-}
+_HARNESS_PREFERENCE = ("kimi", "opencode", "claude")
 
 _NAME_RE = re.compile(r"^[A-Za-z0-9_-]+$")
 
@@ -103,44 +56,120 @@ def _ask(question: str, default: str, stdin, stdout, validate: Callable | None =
         return val
 
 
+def _detect_harness() -> str | None:
+    """Primeiro harness canônico encontrado no PATH (kimi → opencode → claude)."""
+    for h in _HARNESS_PREFERENCE:
+        if shutil.which(h):
+            return h
+    return None
+
+
+def _contract_by_key(key: str) -> dict:
+    return next(c for c in CONTRACTS if c["key"] == key)
+
+
+def _ask_contract(stdin, stdout) -> dict:
+    stdout("  Contrato (papel) do agente:")
+    for i, c in enumerate(CONTRACTS, 1):
+        stdout(f"    {i}. {c['titulo']} — {c['resumo']}")
+    default_idx = next(i for i, c in enumerate(CONTRACTS, 1) if c["key"] == DEFAULT_AUX_CONTRACT)
+    escolha = _ask("Contrato", str(default_idx), stdin, stdout,
+                   validate=lambda v: v.isdigit() and 1 <= int(v) <= len(CONTRACTS),
+                   hint="Enter = desenvolvedor; o contrato completo vai para prompts/<nome>.md")
+    return CONTRACTS[int(escolha) - 1]
+
+
+def _ask_windows(stdin, stdout, agents: list[AgentConfig]) -> dict[str, str]:
+    agrupar = _ask("Agrupar agentes em janelas? (s/N)", "n", stdin, stdout,
+                   hint="janelas agrupam panes lado a lado ou empilhados; "
+                        "agentes fora de janelas ficam com janela própria")
+    if agrupar.lower() != "s":
+        return {}
+    names = [a.name for a in agents]
+    windows: dict[str, str] = {}
+    used: set[str] = set()
+    while True:
+        wname = _ask("Nome da janela", f"win-{len(windows) + 1}", stdin, stdout,
+                     validate=_valid_name)
+        while True:
+            raw = _ask("Agentes (nomes separados por espaço)", "", stdin, stdout,
+                       hint=f"agentes disponíveis: {' '.join(names)}")
+            sel = raw.split()
+            unknown = [s for s in sel if s not in names]
+            grouped = [s for s in sel if s in used]
+            if not sel or len(set(sel)) != len(sel) or unknown or grouped:
+                detalhe = ""
+                if unknown:
+                    detalhe += f"; desconhecidos: {', '.join(unknown)}"
+                if grouped:
+                    detalhe += f"; já agrupados: {', '.join(grouped)}"
+                stdout(f"  entrada inválida — agentes válidos: {', '.join(names)}{detalhe}")
+                continue
+            break
+        disp = "1"
+        if len(sel) > 1:
+            disp = _ask("Disposição (1 = lado a lado, 2 = empilhados)", "1", stdin, stdout,
+                        validate=lambda v: v in ("1", "2"),
+                        hint="lado a lado = colunas (;); empilhados = pilha (,)")
+        sep = ";" if disp == "1" else ","
+        windows[wname] = sep.join(sel)
+        used.update(sel)
+        stdout("preview do layout:")
+        for w, spec in windows.items():
+            stdout(f'  {w} = "{spec}"')
+        mais = _ask("Adicionar outra janela? (s/N)", "n", stdin, stdout)
+        if mais.lower() != "s":
+            break
+    return windows
+
+
 def _collect_config(stdin, stdout) -> Config:
     session = _ask("Nome da sessão", "sac", stdin, stdout, validate=_valid_name,
-                   hint="nome da sessão tmux — usado no attach e na identificação")
-    socket = _ask("Socket tmux (caminho, Enter vazio para sem socket dedicado)", "", stdin, stdout,
-                  hint="socket dedicado isola a esteira do seu tmux pessoal (recomendado)")
+                   hint="aparece em `sac attach` e `tmux ls` — ex.: esteira, nfi")
+    socket = _ask("Socket tmux (caminho; Enter = sem socket)", "", stdin, stdout,
+                  hint="ex.: ~/.sac-nfi/tmux.sock — isola a esteira do seu tmux pessoal; "
+                       "Enter = sem socket (não recomendado)")
     boot_wait = int(_ask("Boot wait (segundos)", "10", stdin, stdout,
                          validate=lambda v: v.isdigit(),
-                         hint="tempo antes de injetar o prompt; harnesses lentos precisam de mais"))
+                         hint="segundos antes de injetar o prompt; harness lento pede mais — ex.: 10 a 15"))
 
     agents = []
     n_agents = int(_ask("Número de agentes", "3", stdin, stdout,
                         validate=lambda v: v.isdigit() and int(v) > 0,
                         hint="quantos agentes (panes) a esteira terá"))
 
+    detected = _detect_harness()
     for i in range(n_agents):
-        stdout(f"\n--- Agente {i+1} ---")
+        if i == 0:
+            stdout("\n--- Agente 1 (leader — o orquestrador) ---")
+            stdout("  ⤷ recebe suas mensagens e delega aos demais; é o pane do `sac attach`")
+        else:
+            stdout(f"\n--- Agente {i+1} (aux) ---")
         name = _ask("Nome", f"agent-{i+1}", stdin, stdout, validate=_valid_name,
-                    hint="identificador do agente — usado no sac send e no sac status")
-        command = _ask("Comando (kimi/opencode)", "kimi" if i == 0 else "opencode", stdin, stdout,
-                       hint="binário do harness — deve existir no PATH")
+                    hint="usado no `sac send` e `sac status` — ex.: leader, dev-1")
+        if detected:
+            cmd_default, cmd_hint = detected, f"detectado no seu PATH ({detected})"
+        else:
+            cmd_default = "kimi" if i == 0 else "opencode"
+            cmd_hint = "binário do harness — deve existir no PATH"
+        command = _ask("Comando (kimi/opencode/claude)", cmd_default, stdin, stdout, hint=cmd_hint)
         while shutil.which(command) is None:
             stdout(f"  ⚠ harness '{command}' não encontrado no PATH — você pode corrigir "
                    "ou seguir assim (ex.: config para outra máquina)")
             corrigir = _ask("Corrigir o comando? (s/N)", "n", stdin, stdout)
             if corrigir.lower() != "s":
                 break
-            command = _ask("Comando (kimi/opencode)", command, stdin, stdout,
+            command = _ask("Comando (kimi/opencode/claude)", command, stdin, stdout,
                            hint="binário do harness — deve existir no PATH")
-        role = "leader" if i == 0 else _ask("Papel (leader/aux)", "aux", stdin, stdout,
-                                            validate=lambda v: v in ("leader", "aux"),
-                                            hint="leader coordena e delega; aux executa tarefas")
+        contract = _contract_by_key(LEADER_CONTRACT) if i == 0 else _ask_contract(stdin, stdout)
         model = _ask("Modelo (opcional — ex.: k3; vazio = não passar --model)", "", stdin, stdout,
                      hint="vazio = não passar --model (usa o default do harness)")
         args = ["--model", model] if model else []
         if command == "opencode":
             args.append("--auto")
         abw = _ask("Boot wait específico (Enter para usar o global)", "", stdin, stdout,
-                   hint="sobrescreve o boot_wait global só para este agente")
+                   hint="só se ESTE harness demora mais que o global — ex.: harness pesado → 15; "
+                        "Enter = usa o global")
         boot_wait_agent: float | None = None
         if abw:
             while True:
@@ -155,8 +184,8 @@ def _collect_config(stdin, stdout) -> Config:
         prompt_name = f"prompts/{name}.md"
         agents.append(AgentConfig(
             name=name, command=command, args=args,
-            role=role, prompt_file=prompt_name,
-            boot_wait=boot_wait_agent,
+            role="leader" if i == 0 else "aux", prompt_file=prompt_name,
+            boot_wait=boot_wait_agent, contract=contract["key"],
         ))
 
     loops = []
@@ -174,10 +203,19 @@ def _collect_config(stdin, stdout) -> Config:
                               hint="limite de voltas do ciclo antes de escalar ao leader"))
             loops.append(LoopConfig(name=lname, sequence=sequence, max_iterations=max_it))
 
+    windows = _ask_windows(stdin, stdout, agents)
+    if windows:
+        # o config exige todos os agentes nos specs: quem ficou de fora ganha janela própria
+        grouped = {n for spec in windows.values() for n in re.split(r"[;,]", spec)}
+        for a in agents:
+            if a.name not in grouped:
+                windows[a.name] = a.name
+
     return Config(
         session_name=session,
         boot_wait=boot_wait,
         socket=socket if socket else None,
+        windows=windows,
         agents=agents,
         loops=loops,
     )
@@ -194,6 +232,11 @@ def _generate_toml(cfg: Config) -> str:
         lines.append("")
     lines.append(f"boot_wait = {cfg.boot_wait}")
     lines.append("")
+    if cfg.windows:
+        lines.append("[windows]")
+        for wname, spec in cfg.windows.items():
+            lines.append(f'{wname} = "{spec}"')
+        lines.append("")
     for a in cfg.agents:
         lines.append("[[agents]]")
         lines.append(f'name = "{a.name}"')
@@ -227,6 +270,18 @@ def _harness_note(cfg: Config, agent: AgentConfig) -> str:
     return ""
 
 
+def _render_contract(contract: dict, harness: str, harness_note: str) -> str:
+    """Contrato completo: papel + protocolo de mensageria SAC + disciplina + notas do harness."""
+    parts = [
+        f"# Papel: {contract['titulo']} (SAC)",
+        contract["intro"],
+        contract["mensageria"],
+        contract["disciplina"],
+        f"## Notas do harness ({harness})\n{harness_note}".rstrip(),
+    ]
+    return "\n\n".join(p.strip("\n") for p in parts if p.strip()) + "\n"
+
+
 def _generate_prompts(cfg: Config, root: Path, stdin=None, stdout=None) -> bool:
     stdin = stdin or input
     stdout = stdout or print
@@ -240,9 +295,8 @@ def _generate_prompts(cfg: Config, root: Path, stdin=None, stdout=None) -> bool:
                 return False
     prompts_dir.mkdir(parents=True, exist_ok=True)
     for a in cfg.agents:
-        template_key = "leader" if a.role == "leader" else "aux"
-        template = PROMPT_TEMPLATES[template_key]
-        content = template.format(harness=_harness_name(cfg, a), harness_note=_harness_note(cfg, a))
+        key = a.contract or (LEADER_CONTRACT if a.role == "leader" else DEFAULT_AUX_CONTRACT)
+        content = _render_contract(_contract_by_key(key), _harness_name(cfg, a), _harness_note(cfg, a))
         (prompts_dir / f"{a.name}.md").write_text(content, encoding="utf-8")
     return True
 
@@ -251,14 +305,15 @@ def _print_onboarding(stdout) -> None:
     stdout("=== Próximos passos ===")
     stdout("1. Pre-warm: rode o harness 1x no diretório para aprovar plugins/login")
     stdout("   → kimi . (ou o comando do seu harness)")
-    stdout("2. Edite os prompts com as regras do seu projeto:")
+    stdout("2. Revise os contratos gerados (edite à vontade):")
     stdout("   → prompts/*.md")
-    stdout("3. Suba a esteira:")
+    stdout("3. Ajuste a configuração da esteira se precisar:")
+    stdout("   → .sac/sac.toml (layout [windows], boot_wait etc.)")
+    stdout("4. Suba a esteira:")
     stdout("   → sac up")
-    stdout("4. Acompanhe:")
+    stdout("5. Acompanhe:")
     stdout("   → sac attach")
     stdout("")
-    stdout("Dica: configure o layout [windows] no sac.toml para agrupar agentes por função.")
     stdout("Veja o guia iniciante em docs/beginner-guide.md")
 
 
@@ -271,13 +326,21 @@ def cmd_init(stdin=None, stdout=None, root: Path | None = None, is_interactive: 
     if is_interactive is None:
         is_interactive = _is_interactive()
     if not is_interactive:
-        stdout("erro: init requer terminal interativo — use `sac --config <path>` para config existente")
+        stdout("erro: modo interativo requer terminal — use --config para apontar um sac.toml existente")
         return 1
 
     try:
-        sac_toml = root / "sac.toml"
-        if sac_toml.exists():
-            answer = _ask("sac.toml já existe. Sobrescrever? (s/N)", "n", stdin, stdout)
+        stdout("SAC init — este wizard gera:")
+        stdout("  .sac/sac.toml   (configuração da esteira)")
+        stdout("  .sac/           (estado: inbox/claimed/done)")
+        stdout("  prompts/*.md    (contrato de cada agente — edite à vontade depois)")
+        stdout("")
+
+        sac_dir = root / ".sac"
+        config_path = sac_dir / "sac.toml"
+        legacy = root / "sac.toml"
+        if config_path.exists() or legacy.exists():
+            answer = _ask("config já existe (.sac/sac.toml ou sac.toml). Sobrescrever? (s/N)", "n", stdin, stdout)
             if answer.lower() != "s":
                 stdout("init cancelado")
                 return 0
@@ -290,13 +353,13 @@ def cmd_init(stdin=None, stdout=None, root: Path | None = None, is_interactive: 
         except Exception as e:
             stdout(f"erro interno: TOML gerado é inválido ({e}) — init abortado")
             return 1
-        sac_toml.write_text(toml_content, encoding="utf-8")
-        stdout(f"sac.toml criado em {sac_toml}")
+        sac_dir.mkdir(parents=True, exist_ok=True)
+        config_path.write_text(toml_content, encoding="utf-8")
+        stdout(f"config criado em {config_path}")
 
         _generate_prompts(cfg, root, stdin=stdin, stdout=stdout)
         stdout(f"prompts criados em {root / 'prompts'}/")
 
-        sac_dir = root / ".sac"
         for sub in ("inbox", "claimed", "done"):
             (sac_dir / sub).mkdir(parents=True, exist_ok=True)
         stdout(f"estado .sac/ criado em {sac_dir}/")

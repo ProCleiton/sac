@@ -9,7 +9,8 @@ from pathlib import Path
 
 from .commands import (
     cmd_done, cmd_doctor, cmd_down, cmd_inject, cmd_kill, cmd_log, cmd_next,
-    cmd_notify, cmd_recv, cmd_run, cmd_send, cmd_sidebar, cmd_sidebar_toggle, cmd_status, cmd_up,
+    cmd_notify, cmd_recv, cmd_run, cmd_send, cmd_sidebar, cmd_sidebar_toggle, cmd_status,
+    cmd_uninstall, cmd_up,
 )
 from .config import ConfigError, load_config
 from .init import cmd_init
@@ -17,11 +18,37 @@ from .daemon import run_daemon
 from .store import Store, StoreError
 from .tmux import Tmux, TmuxError
 
+CONFIG_HIDDEN = Path(".sac") / "sac.toml"
+CONFIG_LEGACY = Path("sac.toml")
+
+
+def resolve_config_path(args_config: str | None) -> Path | None:
+    """Cadeia de descoberta: --config > $SAC_CONFIG > ./.sac/sac.toml > ./sac.toml.
+
+    Retorna o primeiro caminho existente, ou None se nenhum existir.
+    """
+    if args_config:
+        return Path(args_config)
+    env = os.environ.get("SAC_CONFIG")
+    if env:
+        return Path(env)
+    if CONFIG_HIDDEN.is_file():
+        return CONFIG_HIDDEN
+    if CONFIG_LEGACY.is_file():
+        return CONFIG_LEGACY
+    return None
+
+
+def workspace_root(cfg_path: Path) -> Path:
+    """Raiz do workspace: dir do config, exceto quando o config é `.sac/sac.toml`."""
+    parent = cfg_path.resolve().parent
+    return parent.parent if parent.name == ".sac" else parent
+
 
 def _build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="sac", description="Stupid Agentic Coordinator")
-    p.add_argument("--config", default=os.environ.get("SAC_CONFIG") or "sac.toml",
-                   help="caminho do sac.toml (default: $SAC_CONFIG ou ./sac.toml)")
+    p.add_argument("--config", default=None,
+                   help="caminho do sac.toml (default: $SAC_CONFIG, ./.sac/sac.toml ou ./sac.toml)")
     p.add_argument("--sac-root", help="diretório raiz da fila (padrão: diretório do config / .sac)")
     p.add_argument("--version", action="version",
                    version=importlib.metadata.version("sac"))
@@ -70,8 +97,9 @@ def _build_parser() -> argparse.ArgumentParser:
     sp = sub.add_parser("kill", help="mata e recria o harness de um agente")
     sp.add_argument("agent")
 
-    sub.add_parser("init", help="cria sac.toml + prompts + .sac/ via questionário interativo")
+    sub.add_parser("init", help="cria .sac/sac.toml + prompts + .sac/ via questionário interativo")
     sub.add_parser("doctor", help="diagnóstico do ambiente (Python, tmux, socket, config, harnesses)")
+    sub.add_parser("uninstall", help="remove .sac/, prompts/ e sac.toml legado do workspace (com confirmação)")
     sub.add_parser("daemon", help="daemon de mensageria (uso interno, sobe no dashboard)")
     return p
 
@@ -79,18 +107,40 @@ def _build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     args = _build_parser().parse_args(argv)
 
-    if args.command == "init":
-        return cmd_init(root=Path(args.config).resolve().parent)
+    cfg_path = resolve_config_path(args.config)
 
-    cfg_path = Path(args.config).resolve()
+    if args.command == "init":
+        root = workspace_root(cfg_path) if cfg_path else Path(".")
+        return cmd_init(root=root)
+
     if args.command == "doctor":
         return cmd_doctor(cfg_path)
+
+    if args.command == "uninstall":
+        root = workspace_root(cfg_path) if cfg_path else Path(".").resolve()
+        cfg = None
+        tmux = None
+        if cfg_path and cfg_path.is_file():
+            try:
+                cfg = load_config(cfg_path)
+            except ConfigError as e:
+                print(f"aviso: config inválida ({e}) — sessão tmux não verificada", file=sys.stderr)
+            else:
+                tmux = Tmux(cfg.session_name, socket=cfg.socket)
+        return cmd_uninstall(root, cfg, tmux)
+
+    if cfg_path is None:
+        print("erro: config não encontrado — caminhos tentados: --config, $SAC_CONFIG, "
+              "./.sac/sac.toml, ./sac.toml — rode `sac init` para criar um", file=sys.stderr)
+        return 1
+    cfg_path = cfg_path.resolve()
     try:
         cfg = load_config(cfg_path)
     except ConfigError as e:
         print(f"erro de configuração: {e}", file=sys.stderr)
         return 1
 
+    project_root = workspace_root(cfg_path)
     if args.sac_root:
         store_root = Path(args.sac_root)
     elif os.environ.get("SAC_ROOT"):
@@ -98,9 +148,8 @@ def main(argv: list[str] | None = None) -> int:
     elif cfg.root:
         store_root = Path(cfg.root)
     else:
-        store_root = cfg_path.parent
+        store_root = project_root
     store = Store(store_root)
-    project_root = cfg_path.parent
     tmux = Tmux(cfg.session_name, socket=cfg.socket)
 
     try:

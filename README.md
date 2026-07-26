@@ -22,7 +22,8 @@ pip install --user -e .    # may need --break-system-packages on Ubuntu 24.04+
 
 ```bash
 python3 -m unittest discover -s tests -v   # test suite
-sac init                                    # interactive wizard: creates sac.toml + prompts/ + .sac/
+sac init                                    # interactive wizard: creates .sac/sac.toml + prompts/ + .sac/
+sac doctor                                  # environment checkup (Python, tmux, config, harnesses, openspec)
 sac up                                      # start the tmux session with agents
 sac status                                  # overview
 sac status --mini                           # one-line summary (2● 1!) for the tmux status bar
@@ -40,6 +41,7 @@ sac notify --once                           # single re-poke sweep (legacy)
 sac log -f                                  # follow log.jsonl
 sac attach                                  # attach to the tmux session
 sac down                                    # stop everything: harnesses, daemon and tmux session
+sac uninstall                               # remove .sac/, prompts/ and legacy sac.toml (asks for the session name)
 ```
 
 ## Beginner's Guide
@@ -102,16 +104,24 @@ prompts, the `sac init` wizard, and every-day commands.
   during long-running tasks.
 - **Session environment**: every pane (harness, sidebar, dash) receives
   `SAC_ROOT=<raiz do store>` and `SAC_CONFIG=<caminho absoluto do sac.toml>`.
-  The CLI honors `$SAC_CONFIG` as the default for `--config`, so `sac` commands
-  inside panes always resolve the correct session regardless of cwd.
+  Config resolution order: `--config` flag → `$SAC_CONFIG` → `./.sac/sac.toml`
+  (current default) → `./sac.toml` (legacy fallback — old workspaces keep
+  working unchanged). `sac` commands inside panes always resolve the correct
+  session regardless of cwd.
 - **Boot progress & fail-fast**: `sac up` shows per-agent progress
   (`[3/8] agent: creating window... waiting 12s for prompt...`) with
   elapsed-time-aware waiting. Socket directory is auto-created. Critical
   tmux failures abort immediately with a clear error message instead of
   silently pretending success.
 - **`sac init` wizard**: interactive questionnaire that generates a complete
-  `sac.toml`, `prompts/*.md` with the basic SAC contract, `.sac/` skeleton,
-  and socket directory. Name validation (`[A-Za-z0-9_-]`), round-trip TOML
+  `.sac/sac.toml`, `prompts/*.md` with a canonical role contract per agent,
+  `.sac/` skeleton, and socket directory. Every question has a hint with a
+  concrete example. Agent 1 is announced as the leader/orchestrator (no role
+  question); agents 2+ are `aux` and pick a contract from a numbered catalog
+  (leader, developer, reviewer, docs, deploy/release, security, generic aux —
+  default: developer). The harness command defaults to the first one detected
+  in PATH (kimi → opencode → claude). Optional window grouping writes
+  `[windows]` for you. Name validation (`[A-Za-z0-9_-]`), round-trip TOML
   validation, overwrite confirmation. Non-TTY: error guiding to `--config`.
 - **Explicit completion contract**: agents signal completion by writing
   `SAC_DONE` and running `sac done <id>` — the daemon does **not** attempt
@@ -123,8 +133,9 @@ prompts, the `sac init` wizard, and every-day commands.
 - **Filesystem state**: everything lives in `.sac/` (inbox/claimed/done +
   log.jsonl) plus the tmux session. Crash of SAC or the daemon takes nothing
   down; `sac up` is idempotent.
-- **Configuration**: `sac.toml` declares exactly one leader, the auxiliaries and
-  named loops. The session-level `boot_wait` (default 8s) controls how long
+- **Configuration**: `.sac/sac.toml` declares exactly one leader, the
+  auxiliaries and named loops (legacy `./sac.toml` still loads via fallback).
+  The session-level `boot_wait` (default 8s) controls how long
   `sac up` waits before injecting prompts — individual agents can override it
   with `[[agents]] boot_wait = N`. Session geometry is set via `[session]
   width`/`height` (default 220x50) — avoids SIGILL in narrow panes at boot.
@@ -159,7 +170,7 @@ how to do keeps working, untouched.
   | Concern | Owner | Where |
   |---------|-------|-------|
   | Plugins, skills, login, model, harness flags | you | the harness's own config files |
-  | Agents, roles, layout, socket, loops | SAC | `sac.toml` |
+  | Agents, roles, layout, socket, loops | SAC | `.sac/sac.toml` |
   | Agent behavior (contracts, workflow) | you | `prompts/*.md` |
 
 - **Pre-warm before the first `sac up`**: run the harness once in the workspace
@@ -173,6 +184,24 @@ how to do keeps working, untouched.
 - **Stupid on purpose**: SAC doesn't configure the harness, doesn't orchestrate
   your workflow, doesn't impose anything — it just delivers messages. All the
   intelligence lives in the contracts and in each layer's own config.
+
+## Canonical stack: superpowers + OpenSpec
+
+SAC's canonical workflow stack is the **superpowers** skills plugin (TDD,
+systematic debugging, evidence-based review) plus the **OpenSpec** CLI
+(spec-driven changes). They are conventions, not requirements:
+
+- The **canonical contracts** generated by `sac init` (`sac/contracts.py`)
+  translate those disciplines into plain text — TDD, systematic debugging,
+  evidence-based verdicts, per-stage git cycle — so agents follow them **with
+  nothing installed**. If the harness has the superpowers plugin, the agent
+  simply recognizes the practices by their skill names.
+- **OpenSpec** tracks what changes and why (`openspec/`); SAC tracks who does
+  it and when. `sac doctor` warns when the `openspec` CLI is not in PATH and
+  prints the install hint — installing it (and the superpowers plugin) is
+  always the user's call.
+- Editing a contract after `sac init` = opening `prompts/<name>.md` in your
+  editor. The wizard never re-edits contracts.
 
 ## Credits
 
