@@ -221,7 +221,8 @@ documentação externa: toda pergunta tem hint com exemplo concreto.
 - **AND** agentes 2+ são `aux` automaticamente (sem pergunta de papel)
 - **AND** agrupamento opcional de janelas (ver Requirement "Agrupamento de janelas no init")
 - **AND** ao final, gera `.sac/sac.toml` e `prompts/*.md` com o contrato de cada agente
-- **AND** imprime checklist de próximos passos atualizado com os novos caminhos
+- **AND** ao final do fluxo, instala automaticamente os plugins canônicos (sem pergunta no wizard; falha de rede gera aviso orientando `sac plugins install`, sem abortar)
+- **AND** imprime checklist de próximos passos atualizado com os novos caminhos (sem passo de plugins — é automático)
 
 #### Scenario: init não interativo (sem TTY)
 - **GIVEN** stdin não é TTY
@@ -329,6 +330,7 @@ alteram o exit code.
 | Harnesses in PATH | não | cada `command` dos agentes em `[[agents]]` existe no PATH (warning individual) |
 | Legado ignorado | não | `./sac.toml` existe na raiz (warning: fallback removido — mover para `.sac/` ou apagar) |
 | openspec CLI | não | `shutil.which("openspec")` não nulo (warning com orientação de instalação — stack canônica) |
+| Plugins canônicos | não | superpowers/rtk/openspec em `$SAC_HOME/plugins` na ref pinada, bins em `$SAC_HOME/bin` (ver spec plugins-canonicos) |
 
 #### Formato de saída
 
@@ -338,6 +340,8 @@ alteram o exit code.
 [OK]  openspec found in PATH
 [OK]  socket dir ~/.sac-esteira is writable
 [OK]  config loads (.sac/sac.toml, 3 agents)
+[OK]  plugin superpowers @ v6.1.1
+[WARN] plugin rtk não instalado — rode 'sac plugins install'
 [WARN] harness 'kimi' not found in PATH (config may be for another machine)
 [WARN] ./sac.toml existe na raiz mas é ignorado (fallback removido) — mova para .sac/ ou apague
 ```
