@@ -28,14 +28,19 @@ def _run_init(d, inputs, saida=None):
 # v25b: por padrão a listagem de modelos é desativada nos testes (texto livre);
 # os testes da lista numerada re-patcheiam com seus próprios valores.
 _MODELS_PATCHER = patch("sac.init._list_models", return_value=[])
+# v27: o init instala os plugins canônicos automaticamente — mockado nos testes
+# (zero rede); testes específicos re-patcheiam para verificar a chamada.
+_PLUGINS_PATCHER = patch("sac.plugins.cmd_plugins", return_value=0)
 
 
 def setUpModule():
     _MODELS_PATCHER.start()
+    _PLUGINS_PATCHER.start()
 
 
 def tearDownModule():
     _MODELS_PATCHER.stop()
+    _PLUGINS_PATCHER.stop()
 
 
 # sequência base de 3 agentes (leader + dev-1 + dev-2), comandos no PATH mockado
@@ -392,8 +397,9 @@ class InitContractsTest(unittest.TestCase):
         content = (self.d / "prompts" / "rev.md").read_text(encoding="utf-8")
         for trecho in ("sac done", "SAC_DONE", "sac send", "bloqueantes", "warnings"):
             self.assertIn(trecho, content, f"contrato do revisor sem {trecho!r}")
-        for ref in ("superpowers", "openspec", "pip install", "npm i"):
-            self.assertNotIn(ref, content, "contrato não pode exigir plugin/CLI externo")
+        for ref in ("pip install", "npm i"):
+            self.assertNotIn(ref, content,
+                             "contrato aponta os plugins do SAC — nunca instrui instalação")
 
     def test_contrato_lider_tem_disciplina_de_delegacao_e_revisao(self):
         # v26b: delegação e ciclo de revisão viram disciplina do contrato do
@@ -402,8 +408,9 @@ class InitContractsTest(unittest.TestCase):
         disc = lider["disciplina"]
         for trecho in ("sac send", "delegar", "revisão", "iterar", "escalar"):
             self.assertIn(trecho, disc, f"contrato do líder sem {trecho!r}")
-        for ref in ("superpowers", "openspec", "pip install", "npm i"):
-            self.assertNotIn(ref, disc, "contrato não pode exigir plugin/CLI externo")
+        for ref in ("pip install", "npm i"):
+            self.assertNotIn(ref, disc,
+                             "contrato aponta os plugins do SAC — nunca instrui instalação")
 
     def test_aux_contracts_sem_lider(self):
         from sac.contracts import AUX_CONTRACTS
@@ -623,6 +630,31 @@ class InitOnboardingTest(unittest.TestCase):
         self.assertIn("sac up", texto)
         self.assertIn("sac attach", texto)
         self.assertIn("beginner-guide", texto)
+
+    def test_init_instala_plugins_canonicos_automaticamente(self):
+        # v27: o init instala os plugins sem pergunta/opção no wizard
+        d = Path(tempfile.mkdtemp())
+        inputs = ["sess", "", "8", "1", "lead", "kimi", "k3", "", "n"]
+        saida = []
+        with patch("sac.plugins.cmd_plugins", return_value=0) as m:
+            rc = _run_init(d, inputs, saida)
+        self.assertEqual(rc, 0)
+        m.assert_called_once()
+        self.assertEqual(m.call_args[0][0], "install")
+        texto = "\n".join(saida)
+        self.assertIn("Plugins canônicos", texto)
+        self.assertNotIn("→ sac plugins install", texto,
+                         "checklist não tem mais passo de plugins (automático)")
+
+    def test_init_avisa_mas_nao_aborta_se_install_falha(self):
+        d = Path(tempfile.mkdtemp())
+        inputs = ["sess", "", "8", "1", "lead", "kimi", "k3", "", "n"]
+        saida = []
+        with patch("sac.plugins.cmd_plugins", return_value=1):
+            rc = _run_init(d, inputs, saida)
+        self.assertEqual(rc, 0, "falha de rede no install não aborta o init")
+        texto = "\n".join(saida)
+        self.assertIn("sac plugins install", texto, "aviso orienta o reparo manual")
 
 
 class InitWorkspaceTest(unittest.TestCase):

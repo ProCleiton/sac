@@ -9,7 +9,9 @@ from pathlib import Path
 from typing import Callable
 
 from .config import AgentConfig, Config
-from .contracts import AUX_CONTRACTS, CONTRACTS, DEFAULT_AUX_CONTRACT, LEADER_CONTRACT
+from .contracts import (
+    AUX_CONTRACTS, CONTRACTS, DEFAULT_AUX_CONTRACT, LEADER_CONTRACT, stack_canonica,
+)
 
 KIMI_NOTE = """- Kimi Code: respostas longas e analíticas.
 - O modelo é o que você configurou nos args do agente (ex.: `--model <alias/modelo>`).
@@ -284,12 +286,13 @@ def _harness_note(cfg: Config, agent: AgentConfig) -> str:
 
 
 def _render_contract(contract: dict, harness: str, harness_note: str) -> str:
-    """Contrato completo: papel + protocolo de mensageria SAC + disciplina + notas do harness."""
+    """Contrato completo: papel + mensageria SAC + disciplina + stack canônica + notas do harness."""
     parts = [
         f"# Papel: {contract['titulo']} (SAC)",
         contract["intro"],
         contract["mensageria"],
         contract["disciplina"],
+        stack_canonica(contract["key"]),
         f"## Notas do harness ({harness})\n{harness_note}".rstrip(),
     ]
     return "\n\n".join(p.strip("\n") for p in parts if p.strip()) + "\n"
@@ -383,6 +386,12 @@ def cmd_init(stdin=None, stdout=None, root: Path | None = None, is_interactive: 
             stdout(f"diretorio do socket criado: {sock_path.parent}")
 
         stdout("pronto!")
+        stdout("")
+        stdout("=== Plugins canônicos (superpowers, RTK, openspec) ===")
+        from .plugins import cmd_plugins
+        if cmd_plugins("install", stdout=stdout) != 0:
+            stdout("⚠ plugins não instalados — a esteira perde skills/RTK/openspec; "
+                   "rode `sac plugins install` quando houver rede")
         _print_onboarding(stdout)
         return 0
     except InitError as e:

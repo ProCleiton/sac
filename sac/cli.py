@@ -95,6 +95,14 @@ def _build_parser() -> argparse.ArgumentParser:
 
     sub.add_parser("init", help="cria .sac/sac.toml + prompts + .sac/ via questionário interativo")
     sub.add_parser("doctor", help="diagnóstico do ambiente (Python, tmux, socket, config, harnesses)")
+    sp_plug = sub.add_parser("plugins", help="gerencia os plugins canônicos (superpowers, rtk, openspec)")
+    psub = sp_plug.add_subparsers(dest="plugins_command", required=True)
+    psub.add_parser("install", help="clona na ref pinada e materializa os binários em $SAC_HOME/bin")
+    sp_upd = psub.add_parser("update", help="fetch + checkout da ref pinada (e re-materializa bins)")
+    sp_upd.add_argument("--check", action="store_true",
+                        help="só compara pin × upstream, sem alterar nada")
+    psub.add_parser("status", help="mostra instalado/ref/bin de cada plugin")
+    psub.add_parser("uninstall", help="remove $SAC_HOME/plugins e $SAC_HOME/bin (com confirmação)")
     sub.add_parser("uninstall", help="remove .sac/, prompts/ e sac.toml legado do workspace (com confirmação)")
     sub.add_parser("daemon", help="daemon de mensageria (uso interno, sobe no dashboard)")
 
@@ -143,6 +151,10 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "doctor":
         return cmd_doctor(cfg_path)
+
+    if args.command == "plugins":
+        from .plugins import cmd_plugins
+        return cmd_plugins(args.plugins_command, check=getattr(args, "check", False))
 
     if args.command == "uninstall":
         root = workspace_root(cfg_path) if cfg_path else Path(".").resolve()

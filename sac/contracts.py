@@ -1,17 +1,23 @@
 """Catálogo de contratos canônicos de papel do SAC — dados puros (sem lógica).
 
 Cada contrato = corpo de mensageria SAC (protocolo inbox/`sac next`/reply/
-`sac done`) + seção de disciplina do papel. Texto puro em pt-BR: NÃO exige
-plugin superpowers nem CLI openspec instalados — quem tem o plugin reconhece
-as práticas pelos nomes das skills. O contrato do líder inclui a disciplina
-de delegação e ciclo de revisão (delegar com `sac send`, cobrar revisão,
-iterar até convergir — substitui os loops declarados removidos na v26b) e a
-seção de memória de longo prazo (marcadores SAC-MEMORY + instrução de
-curadoria, só com comandos `sac memory`).
+`sac done`) + seção de disciplina do papel. Texto puro em pt-BR. O contrato do
+líder inclui a disciplina de delegação e ciclo de revisão (delegar com
+`sac send`, cobrar revisão, iterar até convergir — substitui os loops
+declarados removidos na v26b) e a seção de memória de longo prazo (marcadores
+SAC-MEMORY + instrução de curadoria, só com comandos `sac memory`).
+
+v27: a seção "Stack canônica SAC" (`stack_canonica`) é acrescentada na geração
+dos prompts com os paths do SAC_HOME resolvidos em runtime — ela descreve o
+que já está disponível na esteira (RTK, skills do superpowers, openspec) e
+NUNCA contém instruções de instalação.
 """
 from __future__ import annotations
 
+from pathlib import Path
+
 from .memory import EMPTY_BLOCK
+from .plugins_manifest import sac_home, superpowers_skills_dir
 
 MESSAGING_LEADER = """## Contrato SAC (obrigatório)
 
@@ -174,3 +180,37 @@ DEFAULT_AUX_CONTRACT = "desenvolvedor"
 
 # Catálogo dos agentes 2+: sem líder (só pode haver um — o agente 1)
 AUX_CONTRACTS = [c for c in CONTRACTS if c["key"] != LEADER_CONTRACT]
+
+
+def stack_canonica(contract_key: str, home: Path | None = None) -> str:
+    """Seção "Stack canônica SAC" (v27) com os paths do SAC_HOME resolvidos em runtime.
+
+    Todos os papéis: RTK obrigatório em comandos verbosos + ponteiro para as
+    skills do superpowers gerenciadas pelo SAC. Líder: openspec + instrução de
+    delegar indicando a ferramenta canônica. Documentação: openspec. A seção
+    descreve o que já está disponível — nunca instrui instalação.
+    """
+    home = sac_home() if home is None else Path(home)
+    skills = superpowers_skills_dir(home)
+    linhas = [
+        "## Stack canônica SAC",
+        "",
+        "- RTK obrigatório em comandos verbosos: `rtk err <build>`, "
+        "`rtk test <suíte>`, `rtk git status|diff|log`, `rtk docker` — "
+        "exceção: saída completa necessária (revisão linha a linha, valores exatos).",
+        f"- Skills canônicas (superpowers) em `{skills}/` — leia a skill "
+        "aplicável ao tipo de tarefa antes de começar.",
+    ]
+    if contract_key == LEADER_CONTRACT:
+        linhas += [
+            "- openspec: specs e changes de projeto vivem em `openspec/` e são "
+            "operados com o CLI `openspec` (validate, archive).",
+            "- Ao delegar, indique a ferramenta canônica da tarefa: RTK sempre; "
+            "openspec quando envolver spec/change; skill superpowers aplicável.",
+        ]
+    if contract_key == "documentacao":
+        linhas += [
+            "- openspec: specs e changes do projeto vivem em `openspec/` — "
+            "mantenha-os atualizados e válidos com o CLI `openspec`.",
+        ]
+    return "\n".join(linhas)

@@ -340,6 +340,35 @@ segurança:
 
 Nada fora do diretório do workspace é tocado, e nenhum processo é morto.
 
+### 7.6 Plugins canônicos (`sac plugins`)
+
+Desde a v27, o SAC gerencia suas próprias cópias dos 3 plugins canônicos —
+**superpowers** (skills), **RTK** (CLI que filtra saídas verbosas) e
+**OpenSpec** (CLI de changes guiadas por spec) — cada um com ref pinada:
+
+- os clones vivem em `$SAC_HOME/plugins/<nome>/` e os binários em
+  `$SAC_HOME/bin/` (`SAC_HOME` default `~/.sac`; compartilhado entre
+  workspaces);
+- dentro da esteira, vale apenas a cópia gerenciada pelo SAC — instalações
+  prévias dos harnesses são ignoradas;
+- `sac plugins install` clona na ref pinada e materializa os binários (`rtk`
+  via asset do release upstream, `openspec` via `npm install --prefix` +
+  shim); é idempotente — rode quando quiser para corrigir o que falta;
+- `sac plugins update` ressincroniza cada clone com a ref pinada;
+  `sac plugins update --check` compara pin × upstream sem alterar nada;
+  `sac plugins status` mostra instalado/ref/bin por plugin;
+  `sac plugins uninstall` remove tudo após confirmação.
+
+A injeção nos agentes é automática no `sac up` (data-driven por harness, ver
+`sac/harness_adapters.py`): todo pane começa o PATH com `$SAC_HOME/bin`;
+agentes `kimi` recebem `--skills-dir` apontando para as skills do SAC (só
+quando o superpowers está instalado); `opencode` e `mimo` sempre recebem
+`--pure`; `claude` recebe `--bare --plugin-dir`, `copilot` a env
+`COPILOT_SKILLS_DIRS` e `codex` `-c skills.config=[...]` (os três só com o
+superpowers instalado); demais harnesses recebem só o PATH e o ponteiro das
+skills no contrato. O `sac doctor` avisa (nunca falha) quando um plugin
+canônico está ausente ou dessincronizado, apontando `sac plugins install`.
+
 ---
 
 ## 8. Comandos do dia a dia
@@ -357,7 +386,8 @@ Nada fora do diretório do workspace é tocado, e nenhum processo é morto.
 | `sac kill <agente>` | Reinicia um harness travado **in-place** (reinjeta prompt, re-alerta tarefas claimed) — sem ciclo down/up |
 | `sac attach` | Entra na sessão tmux para olhar os panes |
 | `sac daemon` | Roda o daemon de entrega (auto-iniciado no dash) |
-| `sac doctor` | Diagnóstico read-only do ambiente: Python, tmux, socket, config (informa qual arquivo foi usado, avisa ambiguidade), harnesses e o CLI `openspec` |
+| `sac doctor` | Diagnóstico read-only do ambiente: Python, tmux, socket, config (informa qual arquivo foi usado, avisa ambiguidade), harnesses, o CLI `openspec` e os plugins canônicos |
+| `sac plugins <sub>` | Plugins canônicos gerenciados pelo SAC (`$SAC_HOME`, default `~/.sac`): `install`, `update [--check]`, `status`, `uninstall` |
 | `sac down` | Desliga tudo: panes dos harnesses (em ordem), daemon (SIGTERM→SIGKILL via pid file) e sessão tmux |
 | `sac uninstall` | Remove `.sac/`, `prompts/` e `sac.toml` legado — recusa com a sessão no ar, exige digitar o nome da sessão |
 | `sac memory <sub>` | Memória de longo prazo do workspace (`.sac/memory.db`): `remember`, `recall`, `revise`, `forget`, `restore`, `decay`, `export`, `pack` |

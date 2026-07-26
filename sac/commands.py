@@ -12,6 +12,8 @@ from collections.abc import Callable, Mapping
 from pathlib import Path
 
 from .config import Config, ConfigError
+from .harness_adapters import harness_args, harness_env
+from .plugins_manifest import bin_dir, sac_home
 from .store import Store, StoreError
 from .tmux import Tmux
 
@@ -126,14 +128,39 @@ def _agent_window(cfg: Config, agent_name: str) -> str:
     return agent_name
 
 
-def _session_env(store: Store, config_path: Path | None, agent: str | None = None) -> dict[str, str]:
-    """Env de sessão exportada aos panes: comandos `sac` resolvem a sessão certa de qualquer cwd."""
+def _harness_cmd(agent, home: Path | None = None) -> list[str]:
+    """Comando do harness com a injeção dos plugins canônicos (v27).
+
+    Delega à tabela data-driven de `sac/harness_adapters.py`: kimi ganha
+    --skills-dir (só com superpowers instalado), opencode/mimo --pure,
+    claude --bare --plugin-dir, codex -c skills.config; harness sem adapter
+    recebe as skills via ponteiro no contrato.
+    """
+    home = sac_home() if home is None else Path(home)
+    cmd = [agent.command, *agent.args]
+    for a in harness_args(agent.command, home):
+        if a not in agent.args:
+            cmd.append(a)
+    return cmd
+
+
+def _session_env(store: Store, config_path: Path | None, agent: str | None = None,
+                 command: str | None = None) -> dict[str, str]:
+    """Env de sessão exportada aos panes: comandos `sac` resolvem a sessão certa de qualquer cwd.
+
+    PATH começa com `$SAC_HOME/bin` (v27): os binários canônicos do SAC
+    (rtk, openspec) têm precedência sobre qualquer instalação externa.
+    Com `command`, aplica a env extra do adapter do harness (ex.: copilot).
+    """
     env = {}
     if agent:
         env["SAC_AGENT"] = agent
     env["SAC_ROOT"] = str(store.root.parent)
     if config_path:
         env["SAC_CONFIG"] = str(config_path)
+    env["PATH"] = f"{bin_dir(sac_home())}{os.pathsep}{os.environ.get('PATH', '')}"
+    if command:
+        env.update(harness_env(command))
     return env
 
 
@@ -162,8 +189,9 @@ def cmd_kill(cfg: Config, store: Store, tmux: Tmux, project_root: Path | None,
         tmux.kill_pane(pid)
     agent = cfg.agent(agent_name)
     _cfg_path = config_path or _default_config_path(project_root)
-    harness_id = tmux.split_window(sidebar_id, [agent.command, *agent.args],
-                                    env=_session_env(store, _cfg_path, agent.name), full=revive)
+    harness_id = tmux.split_window(sidebar_id, _harness_cmd(agent),
+                                    env=_session_env(store, _cfg_path, agent.name,
+                                                     command=agent.command), full=revive)
     tmux.resize_pane(sidebar_id, SIDEBAR_WIDTH)
     tmux.set_pane_title(harness_id, agent.name)
     tmux.set_pane_option(harness_id, "@agent", agent.name)
@@ -599,8 +627,10 @@ def _materialize_legacy(cfg: Config, tmux: Tmux, agents, _out,
         else:
             sidebar_id = tmux.new_window(agent.name, SIDEBAR_CMD, env=env_base)
         _mark_sidebar_pane(tmux, sidebar_id)
-        harness_id = tmux.split_window(sidebar_id, [agent.command, *agent.args],
-                                        env={**env_base, "SAC_AGENT": agent.name} if env_base else {"SAC_AGENT": agent.name})
+        env_extra = harness_env(agent.command)
+        harness_id = tmux.split_window(sidebar_id, _harness_cmd(agent),
+                                        env={**env_base, "SAC_AGENT": agent.name, **env_extra}
+                                        if env_base else {"SAC_AGENT": agent.name, **env_extra})
         tmux.resize_pane(sidebar_id, SIDEBAR_WIDTH)
         tmux.set_pane_title(harness_id, agent.name)
         tmux.set_pane_option(harness_id, "@agent", agent.name)
@@ -758,8 +788,9 @@ def _materialize_grid(cfg: Config, tmux: Tmux, _out,
             for ri, agent_name in enumerate(col):
                 agent = agents_by_name[agent_name]
                 _out(f"{agent.name}: criando pane...")
-                cmd = [agent.command, *agent.args]
-                env = {**env_base, "SAC_AGENT": agent.name} if env_base else {"SAC_AGENT": agent.name}
+                cmd = _harness_cmd(agent)
+                env_extra = harness_env(agent.command)
+                env = {**env_base, "SAC_AGENT": agent.name, **env_extra} if env_base else {"SAC_AGENT": agent.name, **env_extra}
                 if ri == 0:
                     if ci == 0:
                         pid = tmux.split_window(sidebar_id, cmd, env=env, lines=widths[0])
@@ -1025,10 +1056,12 @@ def cmd_uninstall(root: Path, cfg: Config | None, tmux: Tmux | None = None,
 
 
 def cmd_doctor(config_path: Path | None, stdout=print, which=None, tmux_version=None,
-               py_version=None, cwd: Path | None = None) -> int:
+               py_version=None, cwd: Path | None = None, plugins_status=None) -> int:
     """Diagnóstico read-only do ambiente: Python, tmux, socket, config, harnesses.
 
     Exit 0 se todos os itens essenciais OK; 1 se algum essencial falhar.
+    Plugins canônicos (v27) são itens não essenciais: WARN orientando
+    `sac plugins install` quando ausentes ou dessincronizados.
     """
     import shutil
     import subprocess
@@ -1064,6 +1097,18 @@ def cmd_doctor(config_path: Path | None, stdout=print, which=None, tmux_version=
     else:
         stdout("[WARN] openspec not found in PATH — stack canônica: "
                "npm i -g @fission-ai/openspec (ou equivalente)")
+
+    if plugins_status is None:
+        from .plugins import collect_status
+        plugins_status = collect_status
+    for st in plugins_status():
+        if st["sincronizado"]:
+            stdout(f"[OK]  plugin {st['nome']} @ {st['ref']}")
+        elif not st["instalado"]:
+            stdout(f"[WARN] plugin {st['nome']} não instalado — rode 'sac plugins install'")
+        else:
+            stdout(f"[WARN] plugin {st['nome']} dessincronizado "
+                   f"(atual {st['ref_atual']}, pin {st['ref']}) — rode 'sac plugins install'")
 
     if config_path is None:
         base0 = Path(cwd) if cwd is not None else Path(".")
