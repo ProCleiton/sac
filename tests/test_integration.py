@@ -164,10 +164,10 @@ class GridIntegrationTest(unittest.TestCase):
                                capture_output=True, text=True).stdout.split()
         self.assertEqual(roles.count("sidebar"), 3,
                          f"3 sidebars marcadas com @pane_role: {roles}")
-        border = subprocess.run(["tmux", "show-option", "-t", "sac-itest-grid",
+        border = subprocess.run(["tmux", "show-option", "-g",
                                  "-v", "pane-border-status"],
                                 capture_output=True, text=True).stdout.strip()
-        self.assertEqual(border, "top", "borda com status no topo")
+        self.assertEqual(border, "top", "borda com status no topo (global)")
         active = subprocess.run(["tmux", "display-message", "-p", "-t", "sac-itest-grid",
                                  "#{window_name}"],
                                 capture_output=True, text=True).stdout.strip()

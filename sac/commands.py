@@ -7,7 +7,6 @@ import json
 import os
 import re
 import signal
-import subprocess
 import sys
 import time
 from collections.abc import Callable, Mapping
@@ -625,8 +624,7 @@ def _install_legacy_resize_hook(cfg: Config, tmux: Tmux) -> None:
 
 def _mark_sidebar_pane(tmux: Tmux, pid: str) -> None:
     tmux.set_pane_option(pid, "@pane_role", "sidebar")
-    tmux.set_pane_option(pid, "pane-border-format", " #[fg=colour245] sidebar #[default] ")
-    tmux.set_pane_option(pid, "pane-border-format", " #[fg=colour245] sidebar #[default] ")
+    tmux.set_pane_option(pid, "pane-border-format", "")
 
 
 SIDEBAR_MIN_COLS = 28
@@ -641,15 +639,6 @@ def agent_color(name: str) -> int:
     return AGENT_PALETTE[int(h, 16) % len(AGENT_PALETTE)]
 
 
-def _git_branch(project_root: Path) -> str:
-    try:
-        cp = subprocess.run(["git", "branch", "--show-current"],
-                            cwd=project_root, capture_output=True, text=True, timeout=5)
-        return cp.stdout.strip()
-    except (OSError, subprocess.TimeoutExpired):
-        return ""
-
-
 def _sac_version() -> str:
     try:
         return importlib.metadata.version("sac")
@@ -660,28 +649,25 @@ def _sac_version() -> str:
 def _configure_appearance(cfg: Config, tmux: Tmux, project_root: Path,
                           harness_ids: dict[str, str]) -> None:
     tmux._run("set-option", "-t", tmux.session, "mouse", "on")
-    tmux._run("set-option", "-t", tmux.session, "pane-border-status", "top")
-    tmux._run("set-option", "-t", tmux.session, "pane-border-lines", "heavy")
+    tmux._run("set-option", "-g", "pane-border-status", "top")
+    tmux._run("set-option", "-g", "pane-border-lines", "heavy")
     for name, pid in harness_ids.items():
         color = agent_color(name)
         tmux.set_pane_option(pid, "@agent_color", f"colour{color}")
         tmux.set_pane_option(pid, "pane-border-format",
-                             f" #[bg=colour{color},fg=colour0,bold] {name} #[default] ")
+                             f" #[fg=colour{color},bold] #{{@agent}} #[default] ")
         tmux.set_pane_option(pid, "pane-border-style", "fg=colour240")
-    branch = _git_branch(project_root)
     tmux._run("set-option", "-t", tmux.session, "status-left",
-              f"#{{?client_prefix,#[bg=colour203],"
-              f"#{{?pane_in_mode,#[bg=colour215],#[bg=colour213]}}}}"
-              f"#[fg=colour0,bold] #{{?client_prefix,KEY,#{{?pane_in_mode,COPY,INPUT}}}} #[default]"
-              f"#[fg=colour245] ⎇ {branch} ")
+              "#{?client_prefix,#[bg=colour203],"
+              "#{?pane_in_mode,#[bg=colour215],#[bg=colour213]}}"
+              "#[fg=colour0,bold] #{?client_prefix,KEY,#{?pane_in_mode,COPY,INPUT}} #[default]"
+              "#[fg=colour245]#{session_name} ")
     tmux._run("set-option", "-t", tmux.session, "status-right",
-              f"#[fg=colour245] #S:#W "
-              f"#[fg=colour215]#(sac status --mini 2>/dev/null) "
-              f"#[bg=colour212,fg=colour0,bold] #{{?#{{@agent}},#{{@agent}},#{{pane_title}}}} #[default]"
-              f"#[bg=colour61,fg=colour255,bold] SAC {_sac_version()} #[default]"
-              f"#[bg=colour70,fg=colour0] %d/%m %H:%M #[default]")
-    tmux._run("set-option", "-t", tmux.session, "window-status-format", "")
-    tmux._run("set-option", "-t", tmux.session, "window-status-current-format", "")
+              f"#{{@agent}} SAC {_sac_version()} "
+              f"#(sac status --mini 2>/dev/null) "
+              f"#(date +\"%d/%m %a %H:%M\") ")
+    tmux._run("set-option", "-g", "window-status-format", "")
+    tmux._run("set-option", "-g", "window-status-current-format", "")
     tmux_bin = f"tmux -S {cfg.socket}" if cfg.socket else "tmux"
     hook = (
         f"run-shell 'for p in $({tmux_bin} list-panes -s -t {tmux.session} "
