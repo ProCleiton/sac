@@ -58,7 +58,7 @@ documentação externa: toda pergunta tem hint com exemplo concreto.
 - **THEN** o sistema imprime erro: "modo interativo requer terminal — use --config para apontar um sac.toml existente"
 - **AND** retorna exit 1
 
-#### Scenario: init com config existente
+#### Scenario: init com sac.toml existente
 - **GIVEN** `.sac/sac.toml` ou `sac.toml` já existe no diretório
 - **WHEN** `sac init` é executado
 - **THEN** o sistema pergunta se deseja sobrescrever (confirmação)
