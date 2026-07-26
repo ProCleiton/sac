@@ -50,7 +50,19 @@ def _daemon_active(store: Store) -> bool:
         return True
 
 
-def cmd_send(cfg: Config, store: Store, tmux: Tmux, to: str, body: str, sender: str = "user") -> str:
+def cmd_send(cfg: Config, store: Store, tmux: Tmux, to: str, body: str,
+             sender: str = "user", approval: bool = False) -> str:
+    if approval:
+        try:
+            papel = cfg.agent(sender).role
+        except ConfigError:
+            papel = None
+        if papel != "leader":
+            raise StoreError("apenas o leader pode enviar approval_request")
+        if to != "user":
+            raise StoreError("approval_request só pode ser enviada ao user")
+        return store.send(sender, to, body,
+                          msg_type="approval_request", state="pending")
     if to != "user":
         cfg.agent(to)
     mid = store.send(sender, to, body)
@@ -65,6 +77,37 @@ def cmd_send(cfg: Config, store: Store, tmux: Tmux, to: str, body: str, sender: 
         else:
             print(f"aviso: pane do agente '{to}' não encontrado; mensagem persistida na inbox", file=sys.stderr)
     return mid
+
+
+def _responder_aprovacao(store: Store, msg_id: str, state: str,
+                         motivo: str | None = None) -> int:
+    """Grava o veredito na approval_request e envia reply automática ao líder."""
+    try:
+        msg = store.set_approval_state("user", msg_id, state, motivo=motivo)
+    except StoreError as e:
+        print(f"erro: {e}", file=sys.stderr)
+        return 1
+    veredito = "APROVADO" if state == "approved" else "REJEITADO"
+    body = f"[SAC — APROVAÇÃO {msg_id}]\nveredito: {veredito}"
+    if motivo:
+        body += f"\nmotivo: {motivo}"
+    store.send("user", msg.sender, body, reply_to=msg_id)
+    print(f"ok: {msg_id} {'aprovada' if state == 'approved' else 'rejeitada'}")
+    return 0
+
+
+def cmd_approve(store: Store, msg_id: str) -> int:
+    return _responder_aprovacao(store, msg_id, "approved")
+
+
+def cmd_respond(store: Store, msg_id: str, veredito: str,
+                motivo: str | None = None) -> int:
+    v = veredito.upper()
+    if v not in ("APPROVED", "REJECTED"):
+        print("erro: veredito deve ser APPROVED ou REJECTED", file=sys.stderr)
+        return 2
+    return _responder_aprovacao(store, msg_id,
+                                "approved" if v == "APPROVED" else "rejected", motivo)
 
 
 def _require_agent(env: Mapping[str, str]) -> str | None:

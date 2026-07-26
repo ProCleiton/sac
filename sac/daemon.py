@@ -31,6 +31,7 @@ class Daemon:
         self._poke_state: dict[str, dict[str, float]] = {}
         self._poke_count: dict[str, dict[str, int]] = {}
         self._escalated: set[str] = set()
+        self._approval_rendered: set[str] = set()
 
     def _poke_interval(self, msg_id: str) -> float:
         for agent_name, msgs in self._poke_state.items():
@@ -67,7 +68,32 @@ class Daemon:
                     self._process_agent(agent.name)
                 except Exception as exc:
                     self.store.log("loop_error", agent=agent.name, error=str(exc))
+            try:
+                self._process_user_approvals()
+            except Exception as exc:
+                self.store.log("loop_error", agent="user", error=str(exc))
             time.sleep(POLL_INTERVAL)
+
+    def _process_user_approvals(self):
+        """Renderiza approval_requests do user no pane do líder (user não tem pane).
+
+        A mensagem permanece em inbox/user/ até ser respondida com
+        `sac approve`/`sac respond`; cada pedido é renderizado uma vez."""
+        pendentes = [m for m in self.store.pending_approvals("user")
+                     if m.id not in self._approval_rendered]
+        if not pendentes:
+            return
+        pid = self.tmux.find_pane_id(self.cfg.leader.name)
+        if not pid:
+            return
+        for msg in pendentes:
+            body = (f"SAC: aprovação solicitada por {msg.sender} ({msg.id})\n"
+                    f"{msg.body}\n"
+                    f"responda com `sac approve {msg.id}` "
+                    f"ou `sac respond {msg.id} REJECTED [\"motivo\"]`")
+            self.tmux.poke_with_enter(pid, body)
+            self.store.log("approval_prompt", agent="user", id=msg.id, sender=msg.sender)
+            self._approval_rendered.add(msg.id)
 
     def _process_agent(self, name: str):
         try:
