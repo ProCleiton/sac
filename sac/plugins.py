@@ -140,13 +140,18 @@ def _update_one(plugin: dict, home: Path, stdout, run) -> bool:
 
 
 def _latest_tag(plugin: dict, run) -> str | None:
+    """Última tag ESTÁVEL do upstream (pré-releases com sufixo `-...` ignoradas)."""
     r = run(["git", "ls-remote", "--tags", "--sort=-version:refname", plugin["repo"]],
             capture_output=True, text=True)
     if r.returncode != 0:
         return None
     for line in r.stdout.splitlines():
-        if "refs/tags/" in line and not line.rstrip().endswith("^{}"):
-            return line.rsplit("refs/tags/", 1)[-1].strip()
+        if "refs/tags/" not in line or line.rstrip().endswith("^{}"):
+            continue
+        tag = line.rsplit("refs/tags/", 1)[-1].strip()
+        if "-" in tag:  # pré-release: v1.6.0-beta.1, v2.0.0-rc.1...
+            continue
+        return tag
     return None
 
 

@@ -95,7 +95,8 @@ def _build_parser() -> argparse.ArgumentParser:
 
     sub.add_parser("init", help="cria .sac/sac.toml + prompts + .sac/ via questionário interativo")
     sub.add_parser("doctor", help="diagnóstico do ambiente (Python, tmux, socket, config, harnesses)")
-    sp_plug = sub.add_parser("plugins", help="gerencia os plugins canônicos (superpowers, rtk, openspec)")
+    sp_plug = sub.add_parser("plugins", aliases=["plugin"],
+                             help="gerencia os plugins canônicos (superpowers, rtk, openspec)")
     psub = sp_plug.add_subparsers(dest="plugins_command", required=True)
     psub.add_parser("install", help="clona na ref pinada e materializa os binários em $SAC_HOME/bin")
     sp_upd = psub.add_parser("update", help="fetch + checkout da ref pinada (e re-materializa bins)")
@@ -152,7 +153,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "doctor":
         return cmd_doctor(cfg_path)
 
-    if args.command == "plugins":
+    if args.command in ("plugins", "plugin"):
         from .plugins import cmd_plugins
         return cmd_plugins(args.plugins_command, check=getattr(args, "check", False))
 

@@ -256,3 +256,13 @@ class ConfigDiscoveryCliTest(unittest.TestCase):
         self.assertFalse((self.d / "sac.toml").exists())
         self.assertFalse((self.d / "prompts").exists())
         self.assertFalse((self.d / ".sac").exists())
+
+
+class PluginsAliasTest(unittest.TestCase):
+    def test_alias_plugin_funciona_como_plugins(self):
+        with tempfile.TemporaryDirectory() as d, _cwd(Path(d)), _sem_sac_config():
+            with patch("sac.plugins.cmd_plugins", return_value=0) as m:
+                rc = main(["plugin", "status"])
+        self.assertEqual(rc, 0)
+        m.assert_called_once()
+        self.assertEqual(m.call_args[0][0], "status")
