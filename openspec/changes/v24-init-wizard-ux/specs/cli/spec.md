@@ -12,6 +12,10 @@ efetivamente usado.
 - **WHEN** `sac <comando>` é executado sem `--config` e a env `SAC_CONFIG` está definida
 - **THEN** a configuração é carregada do caminho em `SAC_CONFIG`, mesmo que o cwd não contenha config (ou contenha outro)
 
+#### Scenario: SAC_CONFIG ausente
+- **WHEN** `sac <comando>` é executado sem `--config` e sem `SAC_CONFIG` no ambiente
+- **THEN** a configuração é resolvida pela cadeia de diretórios: `./.sac/sac.toml`, depois `./sac.toml` (fallback legado)
+
 #### Scenario: Config oculto é preferido ao legado
 - **WHEN** `./.sac/sac.toml` e `./sac.toml` existem e não há `--config` nem `SAC_CONFIG`
 - **THEN** a configuração é carregada de `./.sac/sac.toml`
