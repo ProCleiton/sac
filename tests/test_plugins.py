@@ -25,7 +25,8 @@ class FakeRun:
         self.calls: list[list[str]] = []
         self.rc = rc
         self.describe = describe      # tag retornada por `git describe --tags --exact-match`
-        self.latest_tag = latest_tag  # tag retornada por `git ls-remote`
+        # tags retornadas por `git ls-remote` (str ou lista, mais recente primeiro)
+        self.latest_tag = latest_tag
 
     def __call__(self, cmd, **kw):
         cmd = [str(c) for c in cmd]
@@ -36,7 +37,8 @@ class FakeRun:
                 Path(cmd[-1]).mkdir(parents=True, exist_ok=True)
         elif cmd[0] == "git" and cmd[1] == "ls-remote":
             if rc == 0 and self.latest_tag:
-                out = f"deadbeef\trefs/tags/{self.latest_tag}\n"
+                tags = self.latest_tag if isinstance(self.latest_tag, list) else [self.latest_tag]
+                out = "".join(f"deadbeef\trefs/tags/{t}\n" for t in tags)
         elif cmd[0] == "git" and cmd[1] == "-C":
             sub = cmd[3]
             if sub == "describe":
@@ -187,6 +189,21 @@ class PluginsUpdateTest(unittest.TestCase):
         kw.setdefault("run", fake)
         rc = self.cmd_plugins(sub, **kw)
         return rc, "\n".join(self.saida)
+
+    def test_check_ignora_pre_release(self):
+        # v29: v1.6.0-beta.1 no topo NÃO é oferecida sobre pin estável
+        fake = FakeRun(latest_tag=["v1.6.0-beta.1", "v1.6.0"])
+        rc, out = self._run("update", fake, check=True)
+        self.assertEqual(rc, 0, out)
+        self.assertNotIn("v1.6.0-beta.1", out)
+        self.assertNotIn("openspec: pin v1.6.0 | upstream v1.6.0 (atualização disponível)", out)
+
+    def test_check_sinaliza_estavel_nova(self):
+        fake = FakeRun(latest_tag=["v6.2.0", "v6.1.1"])
+        rc, out = self._run("update", fake, check=True)
+        self.assertEqual(rc, 0, out)
+        self.assertIn("v6.2.0", out)
+        self.assertIn("atualização disponível", out)
 
     def test_update_faz_fetch_e_checkout_da_ref(self):
         for p in PLUGINS:
