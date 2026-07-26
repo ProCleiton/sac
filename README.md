@@ -57,17 +57,21 @@ prompts, the `sac init` wizard, and every-day commands.
   (`trabalho = "dev-1,auditor"`). Every window gets a left sidebar; the dash
   window is always created. Without `[windows]`, the legacy
   one-window-per-agent layout is preserved.
-- **Sidebar v3**: live tree of windows → agents with `├─`/`└─` connectors,
-  per-agent model (from `--model` in args, e.g. `kimi/k3`), inbox badge `(N)`,
-  idle time (`· 5m`), state markers (`●` claimed, `!` escalated, `◐` inbox,
-  `·` idle, `*` focused), plus the last 5 comms events and tmux tips.
-  `sac sidebar --watch` redraws in place; `sac sidebar --toggle` (bind
-  `prefix+e`) opens/closes it in any window.
-- **Status bar v3**: left shows only the tmux mode (`KEY`/`COPY`/`INPUT`) via
-  `#{?client_prefix,KEY,#{?pane_in_mode,COPY,INPUT}}` and the session name —
-  no window list (`#S:#W` removed). Right shows the focused agent (`#{@agent}`),
-  SAC version, live agent summary (`#(sac status --mini)` → `2● 1!`), and
-  Brazilian-formatted date (`dd/MM dow HH:MM`).
+- **Sidebar**: live tree of windows → agents with `├─`/`└─` connectors,
+  inbox badge `(N)`, idle time (`· 5m`), state markers (`●` claimed,
+  `!` escalated, `◐` inbox, `·` idle, `*` focused), harness command name
+  in gray (e.g. `kimi`), plus the last 5 comms events and tmux tips.
+  The sidebar is 18% of the window width (min 28 cols). `sac sidebar --watch`
+  redraws in place; `sac sidebar --toggle` (bind `prefix+e`) opens/closes it
+  in any window.
+- **Status bar**: Catppuccin Mocha palette with powerline separators (U+E0B0/U+E0B2).
+  Left: mode (`KEY`/`COPY`/`INPUT`) with dynamic background via conditional tmux
+  format (pink/red/peach) → U+E0B0 → workspace name (basename of project root)
+  centred in gray — no session name or mauve block. Right: agent (`#{@agent}`,
+  red) → U+E0B2 → live version (`#(sac --version 2>/dev/null)`, mauve) →
+  U+E0B2 → summary (`#(sac status --mini)`, blue) → U+E0B2 → date
+  (`dd/MM dow HH:MM`, peach). `status-style bg=#1e1e2e,fg=#cdd6f4`,
+  `status-left-length=80`, `status-right-length=120`.
 - **Stable agent identity**: harness panes are tagged with the `@agent` pane
   option at boot — sidebar, status bar, and pane borders never rely on
   `pane_title`, which harnesses overwrite seconds after boot (kimi → "Kimi Code").

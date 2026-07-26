@@ -1,48 +1,4 @@
-# layout-grid Specification
-
-## Purpose
-TBD - created by archiving change v17-layout-ccb. Update Purpose after archive.
-## Requirements
-### Requirement: Gramática de layout [windows]
-O sistema SHALL aceitar specs de layout na forma `;` (split horizontal —
-colunas lado a lado) e `,` (split vertical — empilhado), onde cada folha é o
-nome de um agente, com `,` ligando mais forte que `;`.
-
-#### Scenario: Spec com uma coluna empilhada
-- **GIVEN** o spec `"dev-1,auditor"`
-- **WHEN** o parser processa
-- **THEN** o resultado é um nó vertical (empilhado) com folhas dev-1 e auditor
-
-#### Scenario: Spec com duas colunas
-- **GIVEN** o spec `"dev-1;auditor"`
-- **WHEN** o parser processa
-- **THEN** o resultado é um nó horizontal (colunas) com folhas dev-1 e auditor
-
-#### Scenario: Precedência de vírgula sobre ponto-e-vírgula
-- **GIVEN** o spec `"dev-1,auditor;info"`
-- **WHEN** o parser processa
-- **THEN** a coluna 1 contém dev-1 sobre auditor e a coluna 2 contém info
-
-#### Scenario: Spec vazio ou folha vazia rejeitado
-- **GIVEN** o spec `""` ou `"dev-1,,auditor"` ou `"dev-1;"`
-- **WHEN** o parser processa
-- **THEN** o sistema rejeita com ConfigError
-
-### Requirement: Plano de layout com percentuais proporcionais
-O sistema SHALL transformar a árvore de splits em um plano de panes com
-percentuais proporcionais ao número de folhas de cada nó, aplicados ao espaço
-restante (regra equivalente à do CCB).
-
-#### Scenario: Duas folhas empilhadas dividem 50/50
-- **GIVEN** o spec `"dev-1,auditor"`
-- **WHEN** o plano é construído
-- **THEN** dev-1 ocupa 50% superior e auditor 50% inferior
-
-#### Scenario: Colunas desbalanceadas por folhas
-- **GIVEN** o spec `"dev-1,auditor;info"`
-- **WHEN** o plano é construído
-- **THEN** a coluna 1 (2 folhas) ocupa ~67% da largura dos agentes e a
-  coluna 2 (1 folha) ~33%
+## MODIFIED Requirements
 
 ### Requirement: Materialização do grid no boot
 
@@ -127,21 +83,6 @@ esquerda quando ausente e matando-o quando presente.
 - **THEN** a sessão tem bind `e` para `sac sidebar --toggle` na window
   corrente
 
-### Requirement: Bordas de pane com label e cor estável por agente
-O sistema SHALL exibir `pane-border-status top` com o nome do agente e
-aplicar uma cor estável derivada de hash do nome (paleta fixa), com realce
-no pane ativo.
-
-#### Scenario: Cor estável entre boots
-- **GIVEN** o agente `dev-1`
-- **WHEN** a cor é calculada duas vezes (boots diferentes)
-- **THEN** o valor é idêntico (hash do nome na paleta)
-
-#### Scenario: Pane ativo realçado
-- **WHEN** o foco muda de pane (hook after-select-pane)
-- **THEN** o pane ativo recebe borda na cor do agente com linha heavy e os
-  demais ficam em cinza
-
 ### Requirement: Status bar com modo, git e agente focado
 
 O sistema SHALL configurar a status line da sessão com a paleta Catppuccin
@@ -161,4 +102,3 @@ U+E0B2 → `#(sac --version 2>/dev/null)` mauve → U+E0B2 →
 - **AND** `window-status-format` fica vazio (a tree da sidebar substitui a lista de windows)
 - **AND** `status-style bg=#1e1e2e,fg=#cdd6f4`
 - **AND** `status-left-length=80`, `status-right-length=120`
-
