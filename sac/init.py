@@ -151,8 +151,9 @@ def _collect_config(stdin, stdout) -> Config:
     session = _ask("Nome da sessão", "sac", stdin, stdout, validate=_valid_name,
                    hint="aparece em `sac attach` e `tmux ls` — ex.: esteira, nfi")
     socket = _ask("Socket tmux (caminho; Enter = sem socket)", "", stdin, stdout,
-                  hint="ex.: ~/.sac-nfi/tmux.sock — isola a esteira do seu tmux pessoal; "
-                       "Enter = sem socket (não recomendado)")
+                  hint="digite um caminho dedicado (ex.: ~/.sac-nfi/tmux.sock) — isola a esteira "
+                       "do seu tmux pessoal; Enter deixa SEM socket (não recomendado). "
+                       "O exemplo NÃO é aplicado automaticamente")
     boot_wait = int(_ask("Boot wait (segundos)", "10", stdin, stdout,
                          validate=lambda v: v.isdigit(),
                          hint="segundos antes de injetar o prompt; harness lento pede mais — ex.: 10 a 15"))
