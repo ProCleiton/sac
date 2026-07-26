@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import re
+import shutil
 import sys
 import tomllib
 from pathlib import Path
@@ -84,7 +85,10 @@ def _is_interactive() -> bool:
     return sys.stdin.isatty()
 
 
-def _ask(question: str, default: str, stdin, stdout, validate: Callable | None = None) -> str:
+def _ask(question: str, default: str, stdin, stdout, validate: Callable | None = None,
+         hint: str | None = None) -> str:
+    if hint:
+        stdout(f"  ⤷ {hint}")
     display = f"{question} [{default}]: " if default else f"{question}: "
     while True:
         stdout(display)
@@ -100,24 +104,43 @@ def _ask(question: str, default: str, stdin, stdout, validate: Callable | None =
 
 
 def _collect_config(stdin, stdout) -> Config:
-    session = _ask("Nome da sessão", "sac", stdin, stdout, validate=_valid_name)
-    socket = _ask("Socket tmux (caminho, Enter vazio para sem socket dedicado)", "", stdin, stdout)
-    boot_wait = int(_ask("Boot wait (segundos)", "10", stdin, stdout, validate=lambda v: v.isdigit()))
+    session = _ask("Nome da sessão", "sac", stdin, stdout, validate=_valid_name,
+                   hint="nome da sessão tmux — usado no attach e na identificação")
+    socket = _ask("Socket tmux (caminho, Enter vazio para sem socket dedicado)", "", stdin, stdout,
+                  hint="socket dedicado isola a esteira do seu tmux pessoal (recomendado)")
+    boot_wait = int(_ask("Boot wait (segundos)", "10", stdin, stdout,
+                         validate=lambda v: v.isdigit(),
+                         hint="tempo antes de injetar o prompt; harnesses lentos precisam de mais"))
 
     agents = []
-    n_agents = int(_ask("Número de agentes", "3", stdin, stdout, validate=lambda v: v.isdigit() and int(v) > 0))
+    n_agents = int(_ask("Número de agentes", "3", stdin, stdout,
+                        validate=lambda v: v.isdigit() and int(v) > 0,
+                        hint="quantos agentes (panes) a esteira terá"))
 
     for i in range(n_agents):
         stdout(f"\n--- Agente {i+1} ---")
-        name = _ask("Nome", f"agent-{i+1}", stdin, stdout, validate=_valid_name)
-        command = _ask("Comando (kimi/opencode)", "kimi" if i == 0 else "opencode", stdin, stdout)
+        name = _ask("Nome", f"agent-{i+1}", stdin, stdout, validate=_valid_name,
+                    hint="identificador do agente — usado no sac send e no sac status")
+        command = _ask("Comando (kimi/opencode)", "kimi" if i == 0 else "opencode", stdin, stdout,
+                       hint="binário do harness — deve existir no PATH")
+        while shutil.which(command) is None:
+            stdout(f"  ⚠ harness '{command}' não encontrado no PATH — você pode corrigir "
+                   "ou seguir assim (ex.: config para outra máquina)")
+            corrigir = _ask("Corrigir o comando? (s/N)", "n", stdin, stdout)
+            if corrigir.lower() != "s":
+                break
+            command = _ask("Comando (kimi/opencode)", command, stdin, stdout,
+                           hint="binário do harness — deve existir no PATH")
         role = "leader" if i == 0 else _ask("Papel (leader/aux)", "aux", stdin, stdout,
-                                            validate=lambda v: v in ("leader", "aux"))
-        model = _ask("Modelo (opcional — ex.: k3; vazio = não passar --model)", "", stdin, stdout)
+                                            validate=lambda v: v in ("leader", "aux"),
+                                            hint="leader coordena e delega; aux executa tarefas")
+        model = _ask("Modelo (opcional — ex.: k3; vazio = não passar --model)", "", stdin, stdout,
+                     hint="vazio = não passar --model (usa o default do harness)")
         args = ["--model", model] if model else []
         if command == "opencode":
             args.append("--auto")
-        abw = _ask("Boot wait específico (Enter para usar o global)", "", stdin, stdout)
+        abw = _ask("Boot wait específico (Enter para usar o global)", "", stdin, stdout,
+                   hint="sobrescreve o boot_wait global só para este agente")
         boot_wait_agent: float | None = None
         if abw:
             while True:
@@ -137,15 +160,18 @@ def _collect_config(stdin, stdout) -> Config:
         ))
 
     loops = []
-    add_loops = _ask("Adicionar loops? (s/N)", "n", stdin, stdout)
+    add_loops = _ask("Adicionar loops? (s/N)", "n", stdin, stdout,
+                     hint="loops encadeiam agentes em ciclo (ex.: dev → revisor)")
     if add_loops.lower() == "s":
         n_loops = int(_ask("Quantos loops", "1", stdin, stdout, validate=lambda v: v.isdigit()))
         for i in range(n_loops):
             stdout(f"\n--- Loop {i+1} ---")
             lname = _ask("Nome do loop", f"loop-{i+1}", stdin, stdout, validate=_valid_name)
-            seq = _ask("Sequência (nomes separados por espaço)", " ".join(a.name for a in agents if a.role == "aux"), stdin, stdout)
+            seq = _ask("Sequência (nomes separados por espaço)", " ".join(a.name for a in agents if a.role == "aux"), stdin, stdout,
+                       hint="ordem dos agentes no ciclo")
             sequence = [s.strip() for s in seq.split() if s.strip()]
-            max_it = int(_ask("Max iterações", "3", stdin, stdout, validate=lambda v: v.isdigit()))
+            max_it = int(_ask("Max iterações", "3", stdin, stdout, validate=lambda v: v.isdigit(),
+                              hint="limite de voltas do ciclo antes de escalar ao leader"))
             loops.append(LoopConfig(name=lname, sequence=sequence, max_iterations=max_it))
 
     return Config(
@@ -221,6 +247,21 @@ def _generate_prompts(cfg: Config, root: Path, stdin=None, stdout=None) -> bool:
     return True
 
 
+def _print_onboarding(stdout) -> None:
+    stdout("=== Próximos passos ===")
+    stdout("1. Pre-warm: rode o harness 1x no diretório para aprovar plugins/login")
+    stdout("   → kimi . (ou o comando do seu harness)")
+    stdout("2. Edite os prompts com as regras do seu projeto:")
+    stdout("   → prompts/*.md")
+    stdout("3. Suba a esteira:")
+    stdout("   → sac up")
+    stdout("4. Acompanhe:")
+    stdout("   → sac attach")
+    stdout("")
+    stdout("Dica: configure o layout [windows] no sac.toml para agrupar agentes por função.")
+    stdout("Veja o guia iniciante em docs/beginner-guide.md")
+
+
 def cmd_init(stdin=None, stdout=None, root: Path | None = None, is_interactive: bool | None = None) -> int:
     stdin = stdin or input
     stdout = stdout or print
@@ -265,7 +306,8 @@ def cmd_init(stdin=None, stdout=None, root: Path | None = None, is_interactive: 
             sock_path.parent.mkdir(parents=True, exist_ok=True)
             stdout(f"diretorio do socket criado: {sock_path.parent}")
 
-        stdout("pronto! Rode `sac up` para iniciar a sessão.")
+        stdout("pronto!")
+        _print_onboarding(stdout)
         return 0
     except InitError as e:
         stdout(str(e))

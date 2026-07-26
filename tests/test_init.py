@@ -212,6 +212,92 @@ class InitTest(unittest.TestCase):
         self.assertEqual(content, "old content", "prompt não deve ser sobrescrito")
 
 
+class InitHintTest(unittest.TestCase):
+    def test_ask_com_hint_exibe_hint_antes_da_pergunta(self):
+        from sac.init import _ask
+        saida = []
+        _ask("Nome", "default", lambda: "x", saida.append, hint="identificador do agente")
+        self.assertGreaterEqual(len(saida), 2, "hint deve gerar linha extra na saída")
+        self.assertIn("identificador do agente", saida[0])
+        self.assertIn("Nome", saida[1])
+
+    def test_ask_sem_hint_nao_exibe_linha_extra(self):
+        from sac.init import _ask
+        saida = []
+        _ask("Nome", "default", lambda: "x", saida.append)
+        self.assertEqual(len(saida), 1)
+        self.assertIn("Nome", saida[0])
+
+    def test_collect_config_exibe_hints_em_todas_as_perguntas(self):
+        inputs = [
+            "sess", "", "8", "1",
+            "lead", "kimi", "k3", "",
+            "n",
+        ]
+        saida = []
+        from unittest.mock import patch
+        with patch("sac.init.shutil.which", return_value="/usr/bin/kimi"):
+            _collect_config(stdin=FakeInput(inputs), stdout=saida.append)
+        texto = "\n".join(saida)
+        # um hint por pergunta do questionário (sessão, socket, boot_wait,
+        # nº agentes, nome, comando, modelo, boot_wait específico, loops)
+        for trecho in ("sessão tmux", "socket", "antes de injetar", "agentes",
+                       "sac send", "PATH", "--model", "global", "ciclo"):
+            self.assertIn(trecho, texto, f"hint ausente contendo: {trecho!r}")
+
+
+class InitHarnessValidationTest(unittest.TestCase):
+    def _inputs(self, command_flow):
+        return ["sess", "", "8", "1", "lead", *command_flow, "k3", "", "n"]
+
+    def test_comando_ausente_warning_e_seguir(self):
+        from unittest.mock import patch
+        saida = []
+        with patch("sac.init.shutil.which", return_value=None):
+            cfg = _collect_config(stdin=FakeInput(self._inputs(["foo", "n"])), stdout=saida.append)
+        texto = "\n".join(saida)
+        self.assertIn("não encontrado no PATH", texto)
+        self.assertIn("foo", texto)
+        self.assertEqual(cfg.agents[0].command, "foo", "deve seguir com o comando informado")
+
+    def test_comando_ausente_corrigir(self):
+        from unittest.mock import patch
+        saida = []
+        def which(cmd):
+            return None if cmd == "foo" else "/usr/bin/kimi"
+        with patch("sac.init.shutil.which", side_effect=which):
+            cfg = _collect_config(stdin=FakeInput(self._inputs(["foo", "s", "kimi"])), stdout=saida.append)
+        texto = "\n".join(saida)
+        self.assertIn("não encontrado no PATH", texto)
+        self.assertEqual(cfg.agents[0].command, "kimi", "deve usar o comando corrigido")
+
+    def test_comando_presente_sem_warning(self):
+        from unittest.mock import patch
+        saida = []
+        with patch("sac.init.shutil.which", return_value="/usr/bin/kimi"):
+            cfg = _collect_config(stdin=FakeInput(self._inputs(["kimi"])), stdout=saida.append)
+        texto = "\n".join(saida)
+        self.assertNotIn("não encontrado no PATH", texto)
+        self.assertEqual(cfg.agents[0].command, "kimi")
+
+
+class InitOnboardingTest(unittest.TestCase):
+    def test_init_imprime_checklist_pos_criacao(self):
+        d = Path(tempfile.mkdtemp())
+        inputs = ["sess", "", "8", "1", "lead", "kimi", "k3", "", "n"]
+        saida = []
+        rc = cmd_init(stdin=FakeInput(inputs), stdout=saida.append, root=d, is_interactive=True)
+        self.assertEqual(rc, 0)
+        texto = "\n".join(saida)
+        self.assertIn("Próximos passos", texto)
+        self.assertIn("Pre-warm", texto)
+        self.assertIn("prompts/*.md", texto)
+        self.assertIn("sac up", texto)
+        self.assertIn("sac attach", texto)
+        self.assertIn("[windows]", texto)
+        self.assertIn("beginner-guide", texto)
+
+
 class InitWorkspaceTest(unittest.TestCase):
     def test_init_creates_complete_workspace(self):
         d = Path(tempfile.mkdtemp())

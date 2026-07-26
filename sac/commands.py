@@ -974,3 +974,72 @@ def cmd_log(store: Store, follow: bool = False) -> int:
             else:
                 break
     return 0
+
+
+def cmd_doctor(config_path: Path, stdout=print, which=None, tmux_version=None,
+               py_version=None) -> int:
+    """Diagnóstico read-only do ambiente: Python, tmux, socket, config, harnesses.
+
+    Exit 0 se todos os itens essenciais OK; 1 se algum essencial falhar.
+    """
+    import shutil
+    import subprocess
+
+    which = which or shutil.which
+    if tmux_version is None:
+        def tmux_version():
+            return subprocess.run(["tmux", "-V"], capture_output=True, text=True).stdout.strip()
+    py_version = tuple(py_version) if py_version else tuple(sys.version_info[:3])
+    failed = False
+
+    py_str = ".".join(str(v) for v in py_version)
+    if py_version >= (3, 11):
+        stdout(f"[OK]  Python {py_str}")
+    else:
+        stdout(f"[FAIL] Python {py_str} < 3.11 — upgrade Python to 3.11+")
+        failed = True
+
+    if which("tmux") is None:
+        stdout("[FAIL] tmux not found — install with: apt install tmux / brew install tmux")
+        failed = True
+    else:
+        ver = tmux_version().strip()
+        m = re.search(r"(\d+)\.(\d+)", ver)
+        if m and (int(m.group(1)), int(m.group(2))) >= (3, 2):
+            stdout(f"[OK]  {ver}")
+        else:
+            stdout(f"[FAIL] {ver} < 3.2 — upgrade tmux to 3.2+ (o layout grid exige)")
+            failed = True
+
+    config_path = Path(config_path)
+    if not config_path.exists():
+        stdout(f"[WARN] config not found ({config_path}) — checagens dependentes puladas")
+        return 1 if failed else 0
+
+    from .config import load_config
+    try:
+        cfg = load_config(config_path)
+    except ConfigError as e:
+        stdout(f"[FAIL] config inválida: {e}")
+        return 1
+    stdout(f"[OK]  config loads ({len(cfg.agents)} agents, {len(cfg.loops)} loops)")
+
+    if cfg.socket:
+        parent = Path(cfg.socket).expanduser().parent
+        if parent.is_dir() and os.access(parent, os.W_OK):
+            stdout(f"[OK]  socket dir {parent} is writable")
+        else:
+            stdout(f"[FAIL] socket dir {parent} not writable — crie o diretório ou ajuste `socket` no sac.toml")
+            failed = True
+
+    seen = set()
+    for a in cfg.agents:
+        if a.command in seen:
+            continue
+        seen.add(a.command)
+        if which(a.command):
+            stdout(f"[OK]  harness '{a.command}' found in PATH")
+        else:
+            stdout(f"[WARN] harness '{a.command}' not found in PATH (config may be for another machine)")
+
+    return 1 if failed else 0
