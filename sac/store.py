@@ -13,6 +13,10 @@ class StoreError(Exception):
     """Operação inválida sobre mensagens."""
 
 
+APPROVAL_TYPE = "approval_request"
+APPROVAL_STATES = ("pending", "approved", "rejected")
+
+
 @dataclass
 class Message:
     id: str
@@ -21,6 +25,8 @@ class Message:
     timestamp: str
     body: str
     reply_to: str | None = None
+    type: str | None = None
+    state: str | None = None
 
 
 class Store:
@@ -53,9 +59,12 @@ class Store:
         head, _, body = path.read_text(encoding="utf-8").partition("\n\n")
         meta = dict(line.split(": ", 1) for line in head.splitlines())
         return Message(meta["id"], meta["from"], meta["to"], meta["ts"], body,
-                       reply_to=meta.get("reply_to"))
+                       reply_to=meta.get("reply_to"),
+                       type=meta.get("type"), state=meta.get("state"))
 
-    def send(self, sender: str, recipient: str, body: str, now: datetime | None = None) -> str:
+    def send(self, sender: str, recipient: str, body: str, now: datetime | None = None,
+             msg_type: str | None = None, state: str | None = None,
+             reply_to: str | None = None) -> str:
         now = now or datetime.now()
         stamp = now.strftime("%Y%m%d-%H%M%S")
         existing = []
@@ -63,11 +72,15 @@ class Store:
             existing += [i for i in self._ids(kind, recipient) if i.startswith(stamp)]
         seq = max((int(i.split("-")[2]) for i in existing), default=0) + 1
         mid = f"{stamp}-{seq:03d}-from-{sender}"
-        reply_to = self._infer_reply_to(sender, recipient)
+        reply_to = reply_to or self._infer_reply_to(sender, recipient)
         reply_line = f"reply_to: {reply_to}\n" if reply_to else ""
-        content = f"id: {mid}\nfrom: {sender}\nto: {recipient}\nts: {now.isoformat()}\n{reply_line}\n{body}"
+        type_line = f"type: {msg_type}\n" if msg_type else ""
+        state_line = f"state: {state}\n" if state else ""
+        content = (f"id: {mid}\nfrom: {sender}\nto: {recipient}\nts: {now.isoformat()}\n"
+                   f"{reply_line}{type_line}{state_line}\n{body}")
         (self._dir("inbox", recipient) / f"{mid}.msg").write_text(content, encoding="utf-8")
-        self.log("send", now=now, sender=sender, to=recipient, id=mid)
+        extra = {"type": msg_type} if msg_type else {}
+        self.log("send", now=now, sender=sender, to=recipient, id=mid, **extra)
         return mid
 
     def _infer_reply_to(self, sender: str, recipient: str) -> str | None:
@@ -78,6 +91,52 @@ class Store:
             if msg.sender == recipient:
                 return msg.id
         return None
+
+    def _locate(self, agent: str, msg_id: str) -> Path | None:
+        for kind in ("inbox", "claimed", "done"):
+            p = self.root / kind / agent / f"{msg_id}.msg"
+            if p.is_file():
+                return p
+        return None
+
+    def is_approval_request(self, agent: str, msg_id: str) -> bool:
+        p = self._locate(agent, msg_id)
+        return p is not None and self._parse(p).type == APPROVAL_TYPE
+
+    def pending_approvals(self, agent: str = "user") -> list[Message]:
+        """approval_requests pendentes na inbox do agente (user é destino virtual)."""
+        out = []
+        for mid in self._ids("inbox", agent):
+            msg = self._parse(self.root / "inbox" / agent / f"{mid}.msg")
+            if msg.type == APPROVAL_TYPE and msg.state == "pending":
+                out.append(msg)
+        return out
+
+    def set_approval_state(self, agent: str, msg_id: str, state: str,
+                           motivo: str | None = None,
+                           now: datetime | None = None) -> Message:
+        """Grava o veredito na approval_request e a move de inbox/ para done/."""
+        if state not in ("approved", "rejected"):
+            raise StoreError(f"estado inválido para approval_request: {state}")
+        src = self.root / "inbox" / agent / f"{msg_id}.msg"
+        if not src.is_file():
+            if (self.root / "done" / agent / f"{msg_id}.msg").is_file():
+                raise StoreError(f"mensagem {msg_id} já foi respondida")
+            raise StoreError(f"mensagem não encontrada na inbox de {agent}: {msg_id}")
+        msg = self._parse(src)
+        if msg.type != APPROVAL_TYPE:
+            raise StoreError(f"mensagem {msg_id} não é uma approval_request")
+        if msg.state != "pending":
+            raise StoreError(f"mensagem {msg_id} já foi respondida")
+        head, sep, body = src.read_text(encoding="utf-8").partition("\n\n")
+        lines = [f"state: {state}" if l.startswith("state: ") else l
+                 for l in head.splitlines()]
+        src.write_text("\n".join(lines) + sep + body, encoding="utf-8")
+        dst = self._dir("done", agent) / src.name
+        src.rename(dst)
+        extra = {"motivo": motivo} if motivo else {}
+        self.log("approval", now=now, agent=agent, id=msg_id, state=state, **extra)
+        return self._parse(dst)
 
     def next(self, agent: str) -> Message | None:
         ids = self._ids("inbox", agent)

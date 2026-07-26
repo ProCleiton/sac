@@ -8,9 +8,9 @@ import sys
 from pathlib import Path
 
 from .commands import (
-    cmd_done, cmd_doctor, cmd_down, cmd_inject, cmd_kill, cmd_log, cmd_next,
-    cmd_notify, cmd_recv, cmd_send, cmd_sidebar, cmd_sidebar_toggle, cmd_status,
-    cmd_uninstall, cmd_up,
+    cmd_approve, cmd_done, cmd_doctor, cmd_down, cmd_inject, cmd_kill, cmd_log,
+    cmd_next, cmd_notify, cmd_recv, cmd_respond, cmd_send, cmd_sidebar,
+    cmd_sidebar_toggle, cmd_status, cmd_uninstall, cmd_up,
 )
 from .config import ConfigError, load_config
 from .init import cmd_init
@@ -66,6 +66,17 @@ def _build_parser() -> argparse.ArgumentParser:
     sp = sub.add_parser("send", help="envia mensagem a um agente")
     sp.add_argument("to")
     sp.add_argument("body")
+    sp.add_argument("--approval", action="store_true",
+                    help="(só líder) cria approval_request na inbox do user; "
+                         "o daemon renderiza o pedido no pane do líder")
+
+    sp = sub.add_parser("approve", help="aprova uma approval_request pendente")
+    sp.add_argument("msg_id")
+
+    sp = sub.add_parser("respond", help="responde uma approval_request com veredito")
+    sp.add_argument("msg_id")
+    sp.add_argument("veredito", help="APPROVED ou REJECTED")
+    sp.add_argument("motivo", nargs="*", default=[])
 
     sp = sub.add_parser("done", help="marca mensagem como concluída (agente)")
     sp.add_argument("msg_id")
@@ -222,8 +233,14 @@ def main(argv: list[str] | None = None) -> int:
                 return cmd_next(store, os.environ)
             case "send":
                 cmd_send(cfg, store, tmux, args.to, args.body,
-                         sender=os.environ.get("SAC_AGENT", "user"))
+                         sender=os.environ.get("SAC_AGENT", "user"),
+                         approval=args.approval)
                 return 0
+            case "approve":
+                return cmd_approve(store, args.msg_id)
+            case "respond":
+                return cmd_respond(store, args.msg_id, args.veredito,
+                                   " ".join(args.motivo) or None)
             case "done":
                 return cmd_done(store, os.environ, args.msg_id, " ".join(args.summary))
             case "recv":
