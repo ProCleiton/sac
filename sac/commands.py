@@ -953,13 +953,6 @@ def cmd_notify(cfg: Config, store: Store, tmux: Tmux, once: bool = False) -> int
         return 0
 
 
-def cmd_run(cfg: Config, store: Store, tmux: Tmux, loop_name: str, task: str) -> str:
-    loop = next((l for l in cfg.loops if l.name == loop_name), None)
-    if loop is None:
-        raise ConfigError(f"loop desconhecido: {loop_name}")
-    return cmd_send(cfg, store, tmux, loop.sequence[0], f"[loop {loop_name}] {task}", sender="user")
-
-
 def cmd_log(store: Store, follow: bool = False) -> int:
     path = store.root / "log.jsonl"
     if not path.is_file():
@@ -1092,7 +1085,7 @@ def cmd_doctor(config_path: Path | None, stdout=print, which=None, tmux_version=
     except ConfigError as e:
         stdout(f"[FAIL] config inválida: {e}")
         return 1
-    stdout(f"[OK]  config loads ({config_path}, {len(cfg.agents)} agents, {len(cfg.loops)} loops)")
+    stdout(f"[OK]  config loads ({config_path}, {len(cfg.agents)} agents)")
 
     base = Path(cwd) if cwd is not None else Path(".")
     hidden = base / ".sac" / "sac.toml"

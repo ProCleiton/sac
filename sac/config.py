@@ -22,13 +22,6 @@ class AgentConfig:
 
 
 @dataclass
-class LoopConfig:
-    name: str
-    sequence: list[str]
-    max_iterations: int = 3
-
-
-@dataclass
 class Config:
     session_name: str
     notify_interval: int = 30
@@ -41,7 +34,6 @@ class Config:
     root: str | None = None
     windows: dict[str, str] = field(default_factory=dict)
     agents: list[AgentConfig] = field(default_factory=list)
-    loops: list[LoopConfig] = field(default_factory=list)
 
     @property
     def leader(self) -> AgentConfig:
@@ -63,6 +55,12 @@ def load_config(path: Path) -> Config:
         raise ConfigError(f"TOML inválido em {path}: {e}") from e
 
     session = data.get("session", {})
+    if "loops" in data:
+        raise ConfigError(
+            "seção [[loops]] removida na v26b — remova a seção do config; "
+            "a delegação e os ciclos de revisão são disciplina do contrato do líder "
+            "(delegar com `sac send`, cobrar revisão, iterar até convergir)"
+        )
     agents = [
         AgentConfig(
             name=a["name"],
@@ -81,14 +79,6 @@ def load_config(path: Path) -> Config:
                 raise ConfigError(f"boot_wait deve ser numérico em agente '{a['name']}': {bw}")
             if bw < 0:
                 raise ConfigError(f"boot_wait não pode ser negativo em agente '{a['name']}': {bw}")
-    loops = [
-        LoopConfig(
-            name=l["name"],
-            sequence=list(l["sequence"]),
-            max_iterations=int(l.get("max_iterations", 3)),
-        )
-        for l in data.get("loops", [])
-    ]
 
     names = [a.name for a in agents]
     if len(names) != len(set(names)):
@@ -99,10 +89,6 @@ def load_config(path: Path) -> Config:
     leaders = [a for a in agents if a.role == "leader"]
     if len(leaders) != 1:
         raise ConfigError(f"exatamente 1 agente leader é obrigatório (encontrados {len(leaders)})")
-    for l in loops:
-        for member in l.sequence:
-            if member not in names:
-                raise ConfigError(f"loop {l.name} referencia agente desconhecido: {member}")
 
     session_root = session.get("root")
     if session_root is not None:
@@ -147,5 +133,4 @@ def load_config(path: Path) -> Config:
         root=session_root,
         windows=windows,
         agents=agents,
-        loops=loops,
     )

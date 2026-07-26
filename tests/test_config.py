@@ -22,11 +22,6 @@ name = "dev-1"
 command = "opencode"
 args = ["-m", "x/y"]
 role = "aux"
-
-[[loops]]
-name = "dev-review"
-sequence = ["leader", "dev-1"]
-max_iterations = 3
 """
 
 
@@ -47,7 +42,6 @@ class LoadConfigTest(unittest.TestCase):
         self.assertEqual(cfg.leader.name, "leader")
         self.assertEqual(cfg.agent("dev-1").command, "opencode")
         self.assertEqual(cfg.agent("dev-1").prompt_file, None)
-        self.assertEqual(cfg.loops[0].max_iterations, 3)
 
     def test_defaults(self):
         cfg = self._load(VALID.replace("notify_interval = 30\n", "").replace("poke_stale_after = 120\n", ""))
@@ -103,9 +97,20 @@ class LoadConfigTest(unittest.TestCase):
         with self.assertRaises(ConfigError):
             self._load(VALID.replace('role = "aux"', 'role = "chefe"'))
 
-    def test_loop_unknown_agent_fails(self):
-        with self.assertRaises(ConfigError):
-            self._load(VALID.replace('sequence = ["leader", "dev-1"]', 'sequence = ["leader", "fantasma"]'))
+    def test_config_com_loops_falha_com_orientacao(self):
+        # v26b: [[loops]] removido — config com a seção deve falhar orientando a remoção
+        text = VALID + '\n[[loops]]\nname = "dev-review"\nsequence = ["leader", "dev-1"]\n'
+        with self.assertRaises(ConfigError) as ctx:
+            self._load(text)
+        msg = str(ctx.exception)
+        self.assertIn("loops", msg)
+        self.assertIn("v26b", msg)
+        self.assertIn("remova", msg)
+        self.assertIn("contrato do líder", msg)
+
+    def test_config_sem_loops_carrega_normal(self):
+        cfg = self._load(VALID)
+        self.assertEqual(cfg.session_name, "sac-test")
 
     def test_missing_file_fails(self):
         with self.assertRaises(ConfigError):

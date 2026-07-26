@@ -40,10 +40,6 @@ role = "leader"
 name = "dev-1"
 command = "opencode"
 role = "aux"
-
-[[loops]]
-name = "dev-review"
-sequence = ["leader", "dev-1"]
 """
 
 
@@ -94,15 +90,23 @@ class CliTest(unittest.TestCase):
             rc = main(["--config", self.cfg_path, "next"])
         self.assertEqual(rc, 2)
 
-    def test_run_via_cli(self):
-        rc = main(["--config", self.cfg_path, "run", "dev-review", "implementar X"])
-        self.assertEqual(rc, 0)
-        store = Store(self.d)
-        self.assertEqual(len(store.pending("leader")), 1)
+    def test_run_command_removed(self):
+        # v26b: `sac run` removido junto com os loops declarados
+        err = StringIO()
+        with patch.object(sys, "stderr", err):
+            with self.assertRaises(SystemExit) as ctx:
+                main(["--config", self.cfg_path, "run", "dev-review", "x"])
+        self.assertEqual(ctx.exception.code, 2, "comando desconhecido → argparse exit 2")
 
-    def test_run_unknown_loop_returns_1(self):
-        rc = main(["--config", self.cfg_path, "run", "fantasma", "x"])
+    def test_config_com_loops_retorna_1_com_orientacao(self):
+        cfg_loops = Path(tempfile.mkdtemp()) / "sac.toml"
+        cfg_loops.write_text(VALID + '\n[[loops]]\nname = "x"\nsequence = ["leader"]\n',
+                             encoding="utf-8")
+        err = StringIO()
+        with patch.object(sys, "stderr", err):
+            rc = main(["--config", str(cfg_loops), "status"])
         self.assertEqual(rc, 1)
+        self.assertIn("v26b", err.getvalue())
 
     def test_missing_config_returns_1(self):
         rc = main(["--config", "/tmp/nao-existe.toml", "status"])

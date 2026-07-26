@@ -55,7 +55,7 @@ Everything starts from a single config file. Since v24 the default location is
 `.sac/sac.toml` (inside the hidden state directory); a legacy `./sac.toml` at
 the workspace root is **ignored** since v25 — resolution order is `--config`
 flag → `$SAC_CONFIG` → `./.sac/sac.toml`. To migrate an old workspace:
-`mkdir -p .sac && mv sac.toml .sac/`. Four sections:
+`mkdir -p .sac && mv sac.toml .sac/`. Three sections:
 
 ### 3.1 `[session]` — the tmux session
 
@@ -104,10 +104,6 @@ Grammar: `,` stacks vertically, `;` splits side-by-side. Every window gets a
 latest events). The `dash` window is always created. Without `[windows]`, the
 legacy one-window-per-agent layout is used.
 
-### 3.4 `[[loops]]` — named cycles
-
-See section 5.
-
 ---
 
 ## 4. The Delivery System (Mailbox + Daemon)
@@ -149,36 +145,19 @@ The heart of SAC is a **filesystem mailbox** inside `.sac/`:
 
 ---
 
-## 5. Loops (The "Cycle Delivery" System)
+## 5. Loops — removed in v26b (breaking change)
 
-A `[[loop]]` is a **named shortcut** for firing a sequence of agents:
+Declared loops (`[[loops]]` + the `sac run` command) were **removed in v26b**,
+with no deprecation period: a config containing `[[loops]]` fails to load with
+a clear error — remove the section from your `sac.toml`.
 
-```toml
-[[loops]]
-name = "dev-review"
-sequence = ["lead", "dev-1", "auditor"]
-max_iterations = 5
-```
-
-Fire it with:
-
-```bash
-sac run dev-review "feature Y"
-```
-
-**Critical point for beginners**: SAC does **not** enforce the loop. It does not
-force the auditor to review, does not count iterations, does not block anything.
-The real loop happens because the **prompt contracts** command it — for example,
-the lead-coordinator contract obligates it to:
-
-1. delegate implementation to the dev;
-2. send the result to the `code-auditor` (review gate);
-3. if REPROVED, re-delegate to the dev (max 3 iterations);
-4. if APPROVED, proceed to the next gates (docs → secops → user → deploy).
-
-In other words: `[[loops]]` is **declaration + convention**; the discipline
-lives in the prompts. `max_iterations` documents the intent; the contract
-enforces the limit.
+Delegation and review cycles are now the **leader contract's discipline**: the
+leader decomposes the work, delegates with `sac send <aux> "<task>"`, demands
+review of the auxiliaries' work (reviewing itself or delegating to a reviewer
+aux), and iterates delegate → review → fix until the result converges —
+escalating to the user only on real blockers. The generated leader contract
+(`prompts/<leader>.md`) already carries this discipline; nothing else is
+needed.
 
 ---
 
@@ -296,9 +275,7 @@ SAC init — this wizard generates:
    - model (optional; if filled, generates `args = ["--model", "<model>"]`;
      for `opencode` the wizard already appends `--auto` automatically);
    - per-agent boot wait (Enter = use global).
-5. **Loops** (optional): name, space-separated agent sequence (default: all aux
-   agents), and `max_iterations` (default 3).
-6. **Window grouping** (optional, default no): per window — name, agents
+5. **Window grouping** (optional, default no): per window — name, agents
    (space-separated, validated against the ones just created), and disposition
    (`1` side-by-side → `;`, `2` stacked → `,`), with a preview before asking
    about the next window. Agents left out of every window keep their own
@@ -366,7 +343,6 @@ Nothing outside the workspace directory is touched, and no process is killed.
 | `sac up` | Starts the tmux session with all agents (idempotent, animated 0–100% progress bar, per-agent log) |
 | `sac send <agent> "msg"` | Sends a task/message |
 | `sac send user "msg"` | Talks to the human (they read via `sac log`) — works without configuring "user" as an agent |
-| `sac run <loop> "task"` | Fires a declared loop |
 | `sac recv <agent>` | Reads a reply (up to `SAC_DONE`) |
 | `sac status` / `--mini` | Overview / one-line summary (`2● 1!`) for the tmux status bar |
 | `sac status --clean [--yes]` | Lists/removes orphan inbox+claimed from agents no longer in `sac.toml` (dry-run by default) |

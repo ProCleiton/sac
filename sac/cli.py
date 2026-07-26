@@ -9,7 +9,7 @@ from pathlib import Path
 
 from .commands import (
     cmd_done, cmd_doctor, cmd_down, cmd_inject, cmd_kill, cmd_log, cmd_next,
-    cmd_notify, cmd_recv, cmd_run, cmd_send, cmd_sidebar, cmd_sidebar_toggle, cmd_status,
+    cmd_notify, cmd_recv, cmd_send, cmd_sidebar, cmd_sidebar_toggle, cmd_status,
     cmd_uninstall, cmd_up,
 )
 from .config import ConfigError, load_config
@@ -89,10 +89,6 @@ def _build_parser() -> argparse.ArgumentParser:
                             help="cria/mata o pane da sidebar na window (default: atual)")
     sp_sidebar.add_argument("--watch", action="store_true",
                             help="loop de atualização in-place (sem flicker)")
-
-    sp = sub.add_parser("run", help="dá o pontapé em um loop declarado")
-    sp.add_argument("loop")
-    sp.add_argument("task")
 
     sp = sub.add_parser("kill", help="mata e recria o harness de um agente")
     sp.add_argument("agent")
@@ -223,9 +219,6 @@ def main(argv: list[str] | None = None) -> int:
                 return cmd_notify(cfg, store, tmux, once=args.once)
             case "log":
                 return cmd_log(store, follow=args.follow)
-            case "run":
-                cmd_run(cfg, store, tmux, args.loop, args.task)
-                return 0
             case "kill":
                 return cmd_kill(cfg, store, tmux, project_root, args.agent, config_path=cfg_path)
             case "memory":
