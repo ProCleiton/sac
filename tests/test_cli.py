@@ -33,6 +33,18 @@ class CliTest(unittest.TestCase):
         (self.d / "sac.toml").write_text(VALID, encoding="utf-8")
         self.cfg_path = str(self.d / "sac.toml")
 
+    def test_version_flag(self):
+        from io import StringIO
+        import sys
+        from unittest.mock import patch
+        buf = StringIO()
+        with patch.object(sys, "stdout", buf):
+            with self.assertRaises(SystemExit):
+                main(["--version"])
+        out = buf.getvalue()
+        self.assertTrue(len(out) > 0, "--version imprime algo")
+        self.assertNotIn("erro", out.lower())
+
     def test_send_via_cli(self):
         rc = main(["--config", self.cfg_path, "send", "dev-1", "faça X"])
         self.assertEqual(rc, 0)
