@@ -68,7 +68,7 @@ As respostas dos agentes SHALL ser delimitadas por uma sentinela explícita para
 - **THEN** o sistema retorna os últimos 500 caracteres e exit 1, indicando processamento em andamento
 
 ### Requirement: Daemon de entrega direta
-Um daemon opcional SHALL monitorar inbox/claimed de todos os agentes e entregar mensagens diretamente no pane do harness, com suporte a fura-fila (replies entregues mesmo durante tarefa claimed) e backoff exponencial de re-cutucadas.
+Um daemon opcional SHALL monitorar inbox/claimed de todos os agentes e entregar mensagens diretamente no pane do harness, com suporte a fura-fila (replies entregues mesmo durante tarefa claimed) e backoff exponencial de re-cutucadas. O daemon SHALL também renderizar approval_requests destinadas ao `user` no pane do líder.
 
 #### Scenario: Daemon entrega mensagem nova
 - **GIVEN** daemon ativo (PID file em `.sac/daemon.pid`)
@@ -98,6 +98,12 @@ Um daemon opcional SHALL monitorar inbox/claimed de todos os agentes e entregar 
 - **WHEN** o daemon inicia (`Daemon.run()`)
 - **THEN** escreve `daemon.pid` em `.sac/` com o PID do processo
 - **AND** ao receber SIGTERM/SIGINT, remove o arquivo
+
+#### Scenario: Daemon renderiza approval_request no pane do líder
+- **GIVEN** uma approval_request pendente em `inbox/user/`
+- **WHEN** o daemon varre a inbox do user
+- **THEN** renderiza o pedido no pane do líder (user não tem pane próprio), incluindo o id e a instrução de resposta
+- **AND** registra o evento `approval_prompt` em `log.jsonl`
 
 ### Requirement: Stale detection (re-poke) com backoff
 Mensagens esquecidas (claimed sem `sac done` há mais de `poke_stale_after` segundos) SHALL ser detectadas para re-cutucada do agente, com backoff exponencial por mensagem (base `poke_stale_after`, teto 5 min).
@@ -259,4 +265,19 @@ delay e incluir hint textual para destravar agentes dormentes.
 - **WHEN** o poke manual é enviado
 - **THEN** o texto injetado inclui Enter com delay de 0.2s
 - **AND** inclui hint textual: `"SAC: mensagem nova na inbox — rode \`sac next\`"`
+
+### Requirement: Aprovação como estado de mensagem
+O sistema SHALL suportar o tipo `approval_request` no ciclo de vida da mensagem, com campo de estado `pending | approved | rejected`, além dos estados de localização existentes (inbox/claimed/done).
+
+#### Scenario: approval_request como novo tipo
+- **WHEN** uma mensagem do tipo `approval_request` é criada
+- **THEN** o arquivo .msg contém os campos `type: approval_request` e `state: pending`
+- **AND** após `sac approve`/`sac respond` o estado vira `approved`/`rejected` e a mensagem é movida para `done/`
+- **AND** mensagens sem `type` (legado) seguem o fluxo atual inalterado
+
+#### Scenario: user como destino virtual
+- **GIVEN** o `user` não tem pane tmux próprio
+- **WHEN** uma approval_request chega em `inbox/user/`
+- **THEN** o daemon a renderiza no pane do líder (o usuário acompanha via `sac attach` no pane do líder)
+- **AND** a mensagem permanece na inbox até ser respondida com `sac approve`/`sac respond`
 
