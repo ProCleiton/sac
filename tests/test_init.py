@@ -10,6 +10,7 @@ from sac.init import (
     InitError, _collect_config, _generate_prompts, _generate_toml, _harness_note,
     _is_interactive, _valid_name, cmd_init,
 )
+from sac.init import _list_models as _REAL_LIST_MODELS  # capturada antes do patch de módulo
 
 
 def FakeInput(answers):
@@ -22,6 +23,19 @@ def FakeInput(answers):
 def _run_init(d, inputs, saida=None):
     out = saida.append if saida is not None else (lambda s: None)
     return cmd_init(stdin=FakeInput(inputs), stdout=out, root=d, is_interactive=True)
+
+
+# v25b: por padrão a listagem de modelos é desativada nos testes (texto livre);
+# os testes da lista numerada re-patcheiam com seus próprios valores.
+_MODELS_PATCHER = patch("sac.init._list_models", return_value=[])
+
+
+def setUpModule():
+    _MODELS_PATCHER.start()
+
+
+def tearDownModule():
+    _MODELS_PATCHER.stop()
 
 
 # sequência base de 3 agentes (leader + dev-1 + dev-2), comandos no PATH mockado
@@ -336,9 +350,10 @@ class InitContractsTest(unittest.TestCase):
                                 "n", "n"], saida)
         self.assertEqual(rc, 0)
         texto = "\n".join(saida)
-        self.assertIn("1. líder/orquestrador", texto)
-        self.assertIn("2. desenvolvedor", texto)
-        self.assertIn("7. auxiliar genérico", texto)
+        self.assertIn("1. desenvolvedor", texto)
+        self.assertNotIn("líder/orquestrador —", texto,
+                         "v25b: catálogo dos agentes 2+ exclui líder (só há um)")
+        self.assertIn("6. auxiliar genérico", texto)
         content = (self.d / "prompts" / "dev-1.md").read_text(encoding="utf-8")
         self.assertIn("## Disciplina: desenvolvedor", content, "Enter seleciona o default")
         self.assertIn("TDD", content)
@@ -347,7 +362,7 @@ class InitContractsTest(unittest.TestCase):
         saida = []
         rc = _run_init(self.d, ["sess", "", "8", "2",
                                 "lead", "kimi", "", "",
-                                "dev-1", "opencode", "9", "3", "", "",
+                                "dev-1", "opencode", "9", "2", "", "",
                                 "n", "n"], saida)
         self.assertEqual(rc, 0)
         texto = "\n".join(saida)
@@ -358,7 +373,7 @@ class InitContractsTest(unittest.TestCase):
     def test_contrato_contem_mensageria_e_disciplina(self):
         rc = _run_init(self.d, ["sess", "", "8", "2",
                                 "lead", "kimi", "", "",
-                                "rev", "opencode", "3", "", "",
+                                "rev", "opencode", "2", "", "",
                                 "n", "n"])
         self.assertEqual(rc, 0)
         content = (self.d / "prompts" / "rev.md").read_text(encoding="utf-8")
@@ -366,6 +381,86 @@ class InitContractsTest(unittest.TestCase):
             self.assertIn(trecho, content, f"contrato do revisor sem {trecho!r}")
         for ref in ("superpowers", "openspec", "pip install", "npm i"):
             self.assertNotIn(ref, content, "contrato não pode exigir plugin/CLI externo")
+
+    def test_aux_contracts_sem_lider(self):
+        from sac.contracts import AUX_CONTRACTS
+        self.assertEqual(len(AUX_CONTRACTS), 6)
+        self.assertNotIn(LEADER_CONTRACT, [c["key"] for c in AUX_CONTRACTS])
+        self.assertEqual(AUX_CONTRACTS[0]["key"], DEFAULT_AUX_CONTRACT)
+
+
+class InitModelListTest(unittest.TestCase):
+    """v25b: sugestão de modelos por harness."""
+
+    def setUp(self):
+        self.list_models = _REAL_LIST_MODELS
+        self.d = Path(tempfile.mkdtemp())
+
+    def test_kimi_lista_aliases_do_config(self):
+        cfg = self.d / "config.toml"
+        cfg.write_text('default_model = "kimi-code/k3"\n'
+                       '[models."kimi-code/k3"]\nx = 1\n'
+                       '[models."esteira/k3"]\nx = 1\n', encoding="utf-8")
+        self.assertEqual(self.list_models("kimi", kimi_cfg=cfg),
+                         ["esteira/k3", "kimi-code/k3"])
+
+    def test_kimi_config_ausente_retorna_vazio(self):
+        self.assertEqual(self.list_models("kimi", kimi_cfg=self.d / "nada.toml"), [])
+
+    def test_kimi_config_invalido_retorna_vazio(self):
+        cfg = self.d / "config.toml"
+        cfg.write_text("toml quebrado [[[", encoding="utf-8")
+        self.assertEqual(self.list_models("kimi", kimi_cfg=cfg), [])
+
+    def test_opencode_parse_da_saida(self):
+        from unittest.mock import MagicMock
+        r = MagicMock(returncode=0, stdout="opencode/big-pickle\nopencode/claude-opus-5\n\n")
+        with patch("subprocess.run", return_value=r):
+            self.assertEqual(self.list_models("opencode"),
+                             ["opencode/big-pickle", "opencode/claude-opus-5"])
+
+    def test_opencode_erro_retorna_vazio(self):
+        from unittest.mock import MagicMock
+        with patch("subprocess.run", return_value=MagicMock(returncode=1, stdout="x")):
+            self.assertEqual(self.list_models("opencode"), [])
+
+    def test_opencode_timeout_retorna_vazio(self):
+        import subprocess
+        with patch("subprocess.run", side_effect=subprocess.TimeoutExpired("opencode", 10)):
+            self.assertEqual(self.list_models("opencode"), [])
+
+    def test_harness_desconhecido_retorna_vazio(self):
+        self.assertEqual(self.list_models("claude"), [])
+
+    def test_wizard_resposta_por_numero(self):
+        with patch("sac.init._list_models", return_value=["m1", "m2"]):
+            rc = _run_init(self.d, ["sess", "", "8", "1", "lead", "kimi", "2", "", "n", "n"])
+        self.assertEqual(rc, 0)
+        cfg = load_config(self.d / ".sac" / "sac.toml")
+        self.assertEqual(cfg.agents[0].args, ["--model", "m2"])
+
+    def test_wizard_numero_invalido_repete(self):
+        with patch("sac.init._list_models", return_value=["m1", "m2"]):
+            saida = []
+            rc = _run_init(self.d, ["sess", "", "8", "1", "lead", "kimi", "9", "1", "", "n", "n"], saida)
+        self.assertEqual(rc, 0)
+        self.assertIn("entrada inválida", "\n".join(saida))
+        cfg = load_config(self.d / ".sac" / "sac.toml")
+        self.assertEqual(cfg.agents[0].args, ["--model", "m1"])
+
+    def test_wizard_enter_nao_passa_model(self):
+        with patch("sac.init._list_models", return_value=["m1", "m2"]):
+            rc = _run_init(self.d, ["sess", "", "8", "1", "lead", "kimi", "", "", "n", "n"])
+        self.assertEqual(rc, 0)
+        cfg = load_config(self.d / ".sac" / "sac.toml")
+        self.assertEqual(cfg.agents[0].args, [])
+
+    def test_wizard_sem_lista_cai_em_texto_livre(self):
+        # patch do módulo (setUpModule) já retorna [] → pergunta de texto livre
+        rc = _run_init(self.d, ["sess", "", "8", "1", "lead", "kimi", "k3", "", "n", "n"])
+        self.assertEqual(rc, 0)
+        cfg = load_config(self.d / ".sac" / "sac.toml")
+        self.assertEqual(cfg.agents[0].args, ["--model", "k3"])
 
 
 class InitWindowsTest(unittest.TestCase):

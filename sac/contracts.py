@@ -153,3 +153,6 @@ CONTRACTS = [_LIDER, _DESENVOLVEDOR, _REVISOR, _DOCUMENTACAO, _DEPLOY, _SEGURANC
 
 LEADER_CONTRACT = "lider"
 DEFAULT_AUX_CONTRACT = "desenvolvedor"
+
+# Catálogo dos agentes 2+: sem líder (só pode haver um — o agente 1)
+AUX_CONTRACTS = [c for c in CONTRACTS if c["key"] != LEADER_CONTRACT]
