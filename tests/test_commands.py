@@ -305,6 +305,22 @@ class UpDownStatusTest(unittest.TestCase):
         self.assertIn("SAC_ROOT=", sp)
         self.assertIn("SAC_CONFIG=", sp)
 
+    def test_up_exporta_sac_config_oculto_quando_existe(self):
+        (self.root / ".sac").mkdir(exist_ok=True)
+        (self.root / ".sac" / "sac.toml").write_text(VALID, encoding="utf-8")
+        rc = cmd_up(self.cfg, self.store, self.tmux, self.root, boot_wait=0, config_path=None)
+        self.assertEqual(rc, 0)
+        ns = str(next(c for c in self.runner.calls if c[1] == "new-session"))
+        self.assertIn(f"SAC_CONFIG={self.root / '.sac' / 'sac.toml'}", ns,
+                      "SAC_CONFIG deve apontar para o config oculto efetivamente usado")
+
+    def test_up_exporta_sac_config_legado_quando_nao_ha_oculto(self):
+        rc = cmd_up(self.cfg, self.store, self.tmux, self.root, boot_wait=0, config_path=None)
+        self.assertEqual(rc, 0)
+        ns = str(next(c for c in self.runner.calls if c[1] == "new-session"))
+        self.assertIn(f"SAC_CONFIG={self.root / 'sac.toml'}", ns)
+        self.assertNotIn(".sac/sac.toml", ns)
+
     def test_down_kills_existing_session(self):
         t = Tmux("sac-test", runner=FakeRunner(rc=0))
         rc = cmd_down(self.cfg, self.store, t)
@@ -1597,3 +1613,112 @@ class DoctorTest(unittest.TestCase):
         self._run()
         depois = set(self.d.rglob("*"))
         self.assertEqual(antes, depois, "doctor não deve criar/modificar arquivos")
+
+    def test_reporta_arquivo_de_config_usado(self):
+        rc, out = self._run()
+        self.assertEqual(rc, 0)
+        self.assertIn(f"config loads ({self.d / 'sac.toml'}", out)
+
+    def test_config_ambiguo_warn(self):
+        (self.d / ".sac").mkdir()
+        (self.d / ".sac" / "sac.toml").write_text(VALID, encoding="utf-8")
+        rc, out = self._run(config_path=self.d / ".sac" / "sac.toml", cwd=self.d)
+        self.assertEqual(rc, 0, "ambiguidade é warning, não falha")
+        self.assertIn("config loads", out)
+        self.assertIn(".sac/sac.toml", out.split("config loads")[1].splitlines()[0],
+                      "deve indicar que o arquivo usado é o oculto")
+        self.assertIn("[WARN]", out)
+        self.assertIn("ambíguo", out)
+
+    def test_sem_ambiguidade_sem_warn(self):
+        (self.d / ".sac").mkdir()
+        (self.d / ".sac" / "sac.toml").write_text(VALID, encoding="utf-8")
+        (self.d / "sac.toml").unlink()
+        rc, out = self._run(config_path=self.d / ".sac" / "sac.toml", cwd=self.d)
+        self.assertEqual(rc, 0)
+        self.assertNotIn("ambíguo", out)
+
+    def test_openspec_ausente_warn(self):
+        rc, out = self._run(which=lambda cmd: None if cmd == "openspec" else f"/usr/bin/{cmd}")
+        self.assertEqual(rc, 0, "openspec ausente é warning, não falha")
+        self.assertIn("[WARN] openspec not found in PATH", out)
+        self.assertIn("npm i -g", out)
+
+    def test_openspec_presente_ok(self):
+        rc, out = self._run()
+        self.assertEqual(rc, 0)
+        self.assertIn("[OK]  openspec found in PATH", out)
+
+    def test_sem_config_nenhum_caminho(self):
+        rc, out = self._run(config_path=None)
+        self.assertEqual(rc, 0)
+        self.assertIn("[WARN] config", out)
+        self.assertIn("[OK]  openspec", out, "openspec é checado mesmo sem config")
+
+
+class UninstallTest(unittest.TestCase):
+    def setUp(self):
+        from sac.commands import cmd_uninstall
+        self.cmd_uninstall = cmd_uninstall
+        self.d = Path(tempfile.mkdtemp())
+        (self.d / "sac.toml").write_text(VALID, encoding="utf-8")
+        self.cfg = load_config(self.d / "sac.toml")
+        for sub in ("inbox", "claimed", "done"):
+            (self.d / ".sac" / sub).mkdir(parents=True)
+        (self.d / "prompts").mkdir()
+        (self.d / "prompts" / "leader.md").write_text("x", encoding="utf-8")
+        (self.d / "keep.txt").write_text("intocado", encoding="utf-8")
+        self.saida = []
+
+    class _TmuxStub:
+        def __init__(self, up):
+            self.up = up
+
+        def has_session(self):
+            return self.up
+
+    def _run(self, tmux_up=False, answers=(), cfg=None):
+        self.saida = []
+        rc = self.cmd_uninstall(self.d, cfg if cfg is not None else self.cfg,
+                                self._TmuxStub(tmux_up),
+                                stdin=iter(answers).__next__ if answers else None,
+                                stdout=self.saida.append)
+        return rc, "\n".join(self.saida)
+
+    def test_sessao_no_ar_recusa(self):
+        rc, out = self._run(tmux_up=True)
+        self.assertEqual(rc, 1)
+        self.assertIn("sac down", out)
+        self.assertTrue((self.d / ".sac").exists(), "nada deve ser removido")
+        self.assertTrue((self.d / "prompts").exists())
+
+    def test_confirmacao_errada_aborta(self):
+        rc, out = self._run(answers=["nome-errado"])
+        self.assertEqual(rc, 0)
+        self.assertIn("nada removido", out)
+        self.assertTrue((self.d / ".sac").exists())
+        self.assertTrue((self.d / "sac.toml").exists())
+
+    def test_confirmacao_correta_remove(self):
+        rc, out = self._run(answers=["sac-test"])
+        self.assertEqual(rc, 0)
+        self.assertIn("serão removidos", out, "lista o que será removido antes de confirmar")
+        self.assertFalse((self.d / ".sac").exists(), ".sac/ removido")
+        self.assertFalse((self.d / "prompts").exists(), "prompts/ removido")
+        self.assertFalse((self.d / "sac.toml").exists(), "sac.toml legado removido")
+        self.assertEqual((self.d / "keep.txt").read_text(encoding="utf-8"), "intocado",
+                         "nada fora dos alvos é tocado")
+
+    def test_sem_legado_remove_so_o_que_existe(self):
+        (self.d / "sac.toml").unlink()
+        rc, out = self._run(answers=["sac-test"])
+        self.assertEqual(rc, 0)
+        self.assertFalse((self.d / ".sac").exists())
+        self.assertFalse((self.d / "prompts").exists())
+
+    def test_nada_configurado(self):
+        d2 = Path(tempfile.mkdtemp())
+        saida = []
+        rc = self.cmd_uninstall(d2, None, None, stdout=saida.append)
+        self.assertEqual(rc, 0)
+        self.assertIn("nada para remover", "\n".join(saida))

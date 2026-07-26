@@ -28,7 +28,7 @@ Pense numa repartição pública com caixas de correio:
 
 | Peça do SAC | Na metáfora |
 |---|---|
-| `sac.toml` | O organograma (quem senta em qual mesa) |
+| `.sac/sac.toml` | O organograma (quem senta em qual mesa) |
 | `prompts/*.md` | O manual de conduta de cada funcionário |
 | daemon (`sac daemon`) | O motoboy que leva os ofícios de mesa em mesa |
 | `.sac/` | O arquivo morto onde tudo fica registrado |
@@ -50,9 +50,12 @@ Pré-requisitos: Python 3 e tmux.
 
 ---
 
-## 3. Como configurar: o `sac.toml`
+## 3. Como configurar: o `.sac/sac.toml`
 
-Tudo parte de um único arquivo `sac.toml` na raiz do workspace. Quatro seções:
+Tudo parte de um único arquivo de configuração. Desde a v24 o local padrão é
+`.sac/sac.toml` (dentro do diretório oculto de estado); um `sac.toml` legado na
+raiz do workspace continua funcionando — a ordem de descoberta é: flag
+`--config` → `$SAC_CONFIG` → `./.sac/sac.toml` → `./sac.toml`. Quatro seções:
 
 ### 3.1 `[session]` — a sessão tmux
 
@@ -247,7 +250,7 @@ nunca ao usuário diretamente.
 - Deixe explícito **para quem** o agente reporta e **quando** pedir gate.
 - Repita as regras críticas do workspace (o prompt é a única "memória" garantida
   do agente no boot).
-- Nomes de agentes no contrato devem bater com os `name` do `sac.toml` —
+- Nomes de agentes no contrato devem bater com os `name` do `.sac/sac.toml` —
   é por esses nomes que os `sac send` roteiam.
 
 ---
@@ -255,72 +258,109 @@ nunca ao usuário diretamente.
 ## 7. Detalhe: `sac init` (o wizard)
 
 O `sac init` é um **questionário interativo** (implementado em `sac/sac/init.py`)
-que gera tudo que uma esteira precisa para nascer. **Requer terminal
-interativo** (TTY) — em modo não-interativo ele aborta com a mensagem:
+que gera tudo que uma esteira precisa para nascer — sem ida ao repositório:
+toda pergunta tem hint com exemplo concreto. **Requer terminal interativo**
+(TTY) — em modo não-interativo ele aborta com a mensagem:
 
 ```
-erro: init requer terminal interativo — use `sac --config <path>` para config existente
+erro: modo interativo requer terminal — use --config para apontar um sac.toml existente
+```
+
+O wizard abre anunciando o que será gerado e onde:
+
+```
+SAC init — este wizard gera:
+  .sac/sac.toml   (configuração da esteira)
+  .sac/           (estado: inbox/claimed/done)
+  prompts/*.md    (contrato de cada agente — edite à vontade depois)
 ```
 
 ### 7.1 O que o wizard pergunta
 
-1. **Nome da sessão** (default `sac`) — validado contra `[A-Za-z0-9_-]`.
-2. **Socket tmux** (caminho; Enter = sem socket dedicado).
-3. **Boot wait global** em segundos (default 10).
+1. **Nome da sessão** (default `sac`) — validado contra `[A-Za-z0-9_-]`; o hint
+   mostra onde o nome aparece (`sac attach`, `tmux ls`).
+2. **Socket tmux** (caminho; Enter = sem socket dedicado) — hint com exemplo
+   concreto (`~/.sac-nfi/tmux.sock`).
+3. **Boot wait global** em segundos (default 10) — hint com faixa sugerida.
 4. **Número de agentes** (default 3) e, para cada um:
+   - **o agente 1 é anunciado como leader/orquestrador** (header + hint do
+     papel) — **não há pergunta de papel**; agentes 2+ viram `aux`
+     automaticamente;
    - nome (mesma validação);
-   - comando (`kimi`/`opencode` — o primeiro agente tem default `kimi`);
-   - papel (`leader`/`aux` — o primeiro é **forçado a leader**);
+   - comando — o default é o **primeiro harness detectado no PATH**
+     (kimi → opencode → claude, com hint "detectado no seu PATH"); sem
+     detecção, cai no placeholder fixo (`kimi` para o agente 1, `opencode`
+     para os demais). Comando desconhecido gera warning com opção de corrigir
+     ou seguir;
+   - **contrato** (só agentes 2+): catálogo numerado — ver 7.4; o agente 1
+     recebe o contrato de líder sem pergunta;
    - modelo (opcional; se preenchido, gera `args = ["--model", "<modelo>"]`;
      para `opencode` o wizard já acrescenta `--auto` automaticamente);
    - boot wait específico (Enter = usa o global).
 5. **Loops** (opcional): nome, sequência de agentes separada por espaço
    (default: todos os aux), e `max_iterations` (default 3).
+6. **Agrupamento em janelas** (opcional, default não): por janela — nome,
+   agentes (separados por espaço, validados contra os criados) e disposição
+   (`1` lado a lado → `;`, `2` empilhados → `,`), com preview antes de
+   perguntar pela próxima janela. Agentes fora de qualquer janela ficam com
+   janela própria.
 
 ### 7.2 O que o wizard gera
 
 | Artefato | Conteúdo |
 |---|---|
-| `sac.toml` | Config completa, com **validação round-trip** (o TOML gerado é re-parseado com `tomllib` antes de ser gravado; se inválido, o init aborta) |
-| `prompts/<nome>.md` | Um por agente, a partir de templates internos (`LEADER_PROMPT` / `AUX_PROMPT`) + notas específicas do harness (`KIMI_NOTE` / `OPENCODE_NOTE`) |
+| `.sac/sac.toml` | Config completa, com **validação round-trip** (o TOML gerado é re-parseado com `tomllib` antes de ser gravado; se inválido, o init aborta) |
+| `prompts/<nome>.md` | Um por agente: o contrato canônico do papel escolhido (protocolo de mensageria SAC + disciplina do papel) + notas específicas do harness (`KIMI_NOTE` / `OPENCODE_NOTE`) |
 | `.sac/` | Esqueleto de estado: `inbox/`, `claimed/`, `done/` |
 | diretório do socket | Criado automaticamente se `socket` foi configurado |
 
 ### 7.3 Proteções do wizard
 
-- **`sac.toml` já existe?** Pergunta "Sobrescrever? (s/N)" — default **não**.
+- **Config já existe** (`.sac/sac.toml` ou `sac.toml` legado)? Pergunta
+  "Sobrescrever? (s/N)" — default **não**.
 - **`prompts/*.md` já existem?** Mesma pergunta, default **não** ("prompts
   mantidos").
 - `Ctrl+C`/`EOF` no meio do questionário → "init cancelado pelo usuário", sem
   efeitos colaterais.
 
-### 7.4 Os templates gerados
+### 7.4 O catálogo de contratos canônicos
 
-Os prompts gerados pelo `init` são **mínimos** (só o contrato SAC + notas do
-harness). Exemplo do template de auxiliar:
+O catálogo (dados puros em `sac/sac/contracts.py`) tem 7 papéis. Cada contrato =
+o **protocolo de mensageria SAC** (inbox / `sac next` / reply / `sac done`) +
+a **disciplina do papel**, em texto puro que **não exige plugin nem CLI
+externo**:
 
-```markdown
-# Papel: aux (SAC)
-Você é um auxiliar da esteira SAC. Tarefas chegam automaticamente.
+| # | Papel | Disciplina |
+|---|-------|-----------|
+| 1 | líder/orquestrador | recebe do usuário, decompõe, delega, consolida; escala bloqueios |
+| 2 | desenvolvedor (default dos aux) | TDD (teste antes), mudanças mínimas, debugging sistemático antes de propor fix |
+| 3 | revisor de código | veredito por evidência (roda a suíte, lê o diff); bloqueantes vs. warnings |
+| 4 | documentação | docs fiéis ao código; OpenSpec atualizado |
+| 5 | deploy/release | ciclo git por etapas com autorização; CI verde antes de merge |
+| 6 | segurança | threat modeling do diff, segredos, superfícies de entrada |
+| 7 | auxiliar genérico | contrato SAC básico (mensageria + `SAC_DONE`), sem disciplina extra |
 
-## Contrato SAC (obrigatório)
-- Tarefas chegam diretamente no seu terminal com cabeçalho `SAC <id> de <sender>:`.
-- Ao concluir:
-  1. Envie o resultado ao remetente com `sac send <remetente> "<resumo>"`.
-  2. Escreva `SAC_DONE`.
-  3. Rode `sac done <id> "<resumo>"`.
-- Respostas que você receber são concluídas automaticamente — NÃO rode
-  `sac done` nelas, apenas leia e aja.
+As disciplinas são inspiradas no plugin de skills **superpowers** e no workflow
+**OpenSpec** — a stack canônica do SAC — mas funcionam sem nada disso
+instalado. Editar um contrato depois = abrir o `prompts/<nome>.md` no editor;
+o wizard nunca reedita contratos.
 
-## Notas do harness (opencode)
-- opencode: respostas diretas e código.
-- Use `--auto` para aprovação automática de comandos shell seguros.
-```
+Ou seja: o `init` entrega um **esqueleto funcional com disciplinas reais**; as
+regras de negócio específicas do projeto você adiciona editando os
+`prompts/*.md`.
 
-Ou seja: o `init` dá o **esqueleto funcional**; as regras de negócio do
-workspace (TDD, gates, estilo de commit) você adiciona depois editando os
-`prompts/*.md` — como foi feito nos prompts deste workspace, que são bem mais
-ricos que os templates.
+### 7.5 Começar do zero: `sac uninstall`
+
+O `sac uninstall` remove a configuração do SAC do workspace atual, com
+segurança:
+
+1. **Recusa se a sessão tmux estiver no ar** — rode `sac down` antes;
+2. **Lista o que será removido**: `.sac/` (config + estado), `prompts/` e o
+   `sac.toml` legado, se existir;
+3. **Exige digitar o nome da sessão** para confirmar — qualquer outra entrada
+   aborta sem remover nada.
+
+Nada fora do diretório do workspace é tocado, e nenhum processo é morto.
 
 ---
 
@@ -340,7 +380,9 @@ ricos que os templates.
 | `sac kill <agente>` | Reinicia um harness travado **in-place** (reinjeta prompt, re-alerta tarefas claimed) — sem ciclo down/up |
 | `sac attach` | Entra na sessão tmux para olhar os panes |
 | `sac daemon` | Roda o daemon de entrega (auto-iniciado no dash) |
+| `sac doctor` | Diagnóstico read-only do ambiente: Python, tmux, socket, config (informa qual arquivo foi usado, avisa ambiguidade), harnesses e o CLI `openspec` |
 | `sac down` | Desliga tudo: panes dos harnesses (em ordem), daemon (SIGTERM→SIGKILL via pid file) e sessão tmux |
+| `sac uninstall` | Remove `.sac/`, `prompts/` e `sac.toml` legado — recusa com a sessão no ar, exige digitar o nome da sessão |
 
 Dica: dentro dos panes, as variáveis `SAC_ROOT` e `SAC_CONFIG` já estão
 setadas — comandos `sac` funcionam de qualquer diretório dentro da sessão.

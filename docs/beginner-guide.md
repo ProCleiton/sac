@@ -27,7 +27,7 @@ Think of a government office with mailboxes:
 
 | SAC Component | In the Metaphor |
 |---|---|
-| `sac.toml` | The org chart (who sits at which desk) |
+| `.sac/sac.toml` | The org chart (who sits at which desk) |
 | `prompts/*.md` | Each employee's conduct manual |
 | daemon (`sac daemon`) | The courier who carries memos desk-to-desk |
 | `.sac/` | The records room where everything is logged |
@@ -49,10 +49,12 @@ Prerequisites: Python 3 and tmux.
 
 ---
 
-## 3. How to Configure: `sac.toml`
+## 3. How to Configure: `.sac/sac.toml`
 
-Everything starts from a single `sac.toml` at the root of your workspace. Four
-sections:
+Everything starts from a single config file. Since v24 the default location is
+`.sac/sac.toml` (inside the hidden state directory); a legacy `./sac.toml` at
+the workspace root still works — resolution order is `--config` flag →
+`$SAC_CONFIG` → `./.sac/sac.toml` → `./sac.toml`. Four sections:
 
 ### 3.1 `[session]` — the tmux session
 
@@ -246,7 +248,7 @@ leader, never directly to the user.
 - Explicitly state **who** the agent reports to and **when** to request a gate.
 - Repeat critical workspace rules (the prompt is the agent's only guaranteed
   "memory" at boot).
-- Agent names in the contract must match the `name` in `sac.toml` — that is
+- Agent names in the contract must match the `name` in `.sac/sac.toml` — that is
   how `sac send` routes messages.
 
 ---
@@ -254,70 +256,105 @@ leader, never directly to the user.
 ## 7. Deep Dive: `sac init` (The Wizard)
 
 `sac init` is an **interactive questionnaire** (implemented in `sac/sac/init.py`)
-that generates everything a pipeline needs to start. **It requires an
-interactive terminal** (TTY) — in non-interactive mode it aborts with:
+that generates everything a pipeline needs to start — no trip to the repository
+required: every question carries a hint with a concrete example. **It requires
+an interactive terminal** (TTY) — in non-interactive mode it aborts with:
 
 ```
-error: init requires an interactive terminal — use `sac --config <path>` for an existing config
+error: interactive mode requires a terminal — use --config to point to an existing sac.toml
+```
+
+The wizard opens by announcing what will be generated and where:
+
+```
+SAC init — this wizard generates:
+  .sac/sac.toml   (pipeline configuration)
+  .sac/           (state: inbox/claimed/done)
+  prompts/*.md    (each agent's contract — edit freely afterwards)
 ```
 
 ### 7.1 What the Wizard Asks
 
-1. **Session name** (default `sac`) — validated against `[A-Za-z0-9_-]`.
-2. **tmux socket** (path; Enter = no dedicated socket).
-3. **Global boot wait** in seconds (default 10).
+1. **Session name** (default `sac`) — validated against `[A-Za-z0-9_-]`; hint
+   shows where the name appears (`sac attach`, `tmux ls`).
+2. **tmux socket** (path; Enter = no dedicated socket) — hint with a concrete
+   example (`~/.sac-nfi/tmux.sock`).
+3. **Global boot wait** in seconds (default 10) — hint with a suggested range.
 4. **Number of agents** (default 3) and, for each:
+   - **Agent 1 is announced as the leader/orchestrator** (header + hint
+     explaining the role) — there is **no role question**; agents 2+ are `aux`
+     automatically;
    - name (same validation);
-   - command (`kimi`/`opencode` — the first agent defaults to `kimi`);
-   - role (`leader`/`aux` — the first is **forced to leader**);
+   - command — the default is the **first harness detected in PATH**
+     (kimi → opencode → claude, with a "detected in your PATH" hint); when
+     nothing is detected, a fixed placeholder (`kimi` for agent 1, `opencode`
+     for the rest). Unknown commands trigger a warning offering to fix or
+     continue;
+   - **contract** (agents 2+ only): a numbered catalog — see 7.4; agent 1
+     receives the leader contract with no question;
    - model (optional; if filled, generates `args = ["--model", "<model>"]`;
      for `opencode` the wizard already appends `--auto` automatically);
    - per-agent boot wait (Enter = use global).
 5. **Loops** (optional): name, space-separated agent sequence (default: all aux
    agents), and `max_iterations` (default 3).
+6. **Window grouping** (optional, default no): per window — name, agents
+   (space-separated, validated against the ones just created), and disposition
+   (`1` side-by-side → `;`, `2` stacked → `,`), with a preview before asking
+   about the next window. Agents left out of every window keep their own
+   window.
 
 ### 7.2 What the Wizard Generates
 
 | Artifact | Content |
 |---|---|
-| `sac.toml` | Full config, with **round-trip validation** (the generated TOML is re-parsed with `tomllib` before writing; if invalid, init aborts) |
-| `prompts/<name>.md` | One per agent, built from internal templates (`LEADER_PROMPT` / `AUX_PROMPT`) plus harness-specific notes (`KIMI_NOTE` / `OPENCODE_NOTE`) |
+| `.sac/sac.toml` | Full config, with **round-trip validation** (the generated TOML is re-parsed with `tomllib` before writing; if invalid, init aborts) |
+| `prompts/<name>.md` | One per agent: the canonical contract for the chosen role (SAC messaging protocol + role discipline) plus harness-specific notes (`KIMI_NOTE` / `OPENCODE_NOTE`) |
 | `.sac/` | State skeleton: `inbox/`, `claimed/`, `done/` |
 | Socket directory | Created automatically if `socket` was configured |
 
 ### 7.3 Wizard Protections
 
-- **`sac.toml` already exists?** Asks "Overwrite? (y/N)" — default **no**.
+- **Config already exists** (`.sac/sac.toml` or legacy `sac.toml`)? Asks
+  "Overwrite? (y/N)" — default **no**.
 - **`prompts/*.md` already exist?** Same question, default **no** ("prompts
   kept").
 - `Ctrl+C`/`EOF` mid-questionnaire → "init cancelled by user", no side effects.
 
-### 7.4 Generated Templates
+### 7.4 The Canonical Contract Catalog
 
-The prompts generated by `init` are **minimal** (just the SAC contract + harness
-notes). Example of the aux template:
+The catalog (pure data in `sac/sac/contracts.py`) has 7 roles. Each contract =
+the **SAC messaging protocol** (inbox / `sac next` / reply / `sac done`) + the
+**role discipline**, in plain text that requires **no external plugin or CLI**:
 
-```markdown
-# Role: aux (SAC)
-You are an auxiliary on the SAC pipeline. Tasks arrive automatically.
+| # | Role | Discipline |
+|---|------|-----------|
+| 1 | leader/orchestrator | receives from the user, decomposes, delegates, consolidates; escalates blockers |
+| 2 | developer (default for aux) | TDD (test first), minimal changes, systematic debugging before proposing a fix |
+| 3 | code reviewer | evidence-based verdict (runs the suite, reads the diff); blockers vs. warnings |
+| 4 | documentation | docs faithful to the code; OpenSpec kept up to date |
+| 5 | deploy/release | per-stage git cycle with authorization; green CI before merge |
+| 6 | security | threat modeling of the diff, secrets, entry surfaces |
+| 7 | generic aux | basic SAC contract (messaging + `SAC_DONE`), no extra discipline |
 
-## SAC Contract (mandatory)
-- Tasks arrive directly in your terminal with header `SAC <id> from <sender>:`.
-- On completion:
-  1. Send the result to the sender with `sac send <sender> "<summary>"`.
-  2. Write `SAC_DONE`.
-  3. Run `sac done <id> "<summary>"`.
-- Replies you receive are auto-acknowledged — do NOT run `sac done` on them,
-  just read and act.
+The disciplines are inspired by the **superpowers** skills plugin and the
+**OpenSpec** workflow — SAC's canonical stack — but work without them
+installed. Editing a contract later = opening `prompts/<name>.md` in your
+editor; the wizard never re-edits contracts.
 
-## Harness Notes (opencode)
-- opencode: direct answers and code.
-- Use `--auto` for automatic approval of safe shell commands.
-```
+In other words: `init` gives you a **working skeleton with real disciplines**;
+you add the project-specific business rules by editing `prompts/*.md`.
 
-In other words: `init` gives you a **working skeleton**; you add the business
-rules (TDD, gates, commit style) later by editing `prompts/*.md` — just like
-the workspace prompts, which are much richer than the templates.
+### 7.5 Starting Over: `sac uninstall`
+
+`sac uninstall` removes SAC's configuration from the current workspace, safely:
+
+1. **Refuses if the tmux session is up** — run `sac down` first;
+2. **Lists what will be removed**: `.sac/` (config + state), `prompts/`, and
+   the legacy `sac.toml` if present;
+3. **Requires typing the session name** to confirm — anything else aborts
+   without removing anything.
+
+Nothing outside the workspace directory is touched, and no process is killed.
 
 ---
 
@@ -337,7 +374,9 @@ the workspace prompts, which are much richer than the templates.
 | `sac kill <agent>` | Restarts a stuck harness **in-place** (re-injects prompt, re-alerts claimed tasks) — no down/up cycle |
 | `sac attach` | Attaches to the tmux session to look at panes |
 | `sac daemon` | Runs the delivery daemon (auto-started in dash) |
+| `sac doctor` | Read-only environment checkup: Python, tmux, socket, config (reports which file was used, warns on ambiguity), harnesses and the `openspec` CLI |
 | `sac down` | Shuts down everything: harness panes (in order), daemon (SIGTERM→SIGKILL via pid file), and tmux session |
+| `sac uninstall` | Removes `.sac/`, `prompts/` and legacy `sac.toml` — refuses with the session up, requires typing the session name |
 
 Tip: inside panes, the `SAC_ROOT` and `SAC_CONFIG` environment variables are
 already set — `sac` commands work from any directory inside the session.

@@ -18,6 +18,7 @@ class AgentConfig:
     role: str  # "leader" | "aux"
     prompt_file: str | None = None
     boot_wait: float | None = None
+    contract: str | None = None  # chave do catálogo de contratos (init; não vem do TOML)
 
 
 @dataclass
