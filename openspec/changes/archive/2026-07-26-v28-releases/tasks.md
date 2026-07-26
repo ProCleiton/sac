@@ -13,5 +13,5 @@
 
 ## 3. Fechamento
 - [x] 3.1 Suíte verde; `openspec validate v28-releases` OK
-- [ ] 3.2 Primeira release real: tag v1.0.0 pushed → workflow verde →
+- [x] 3.2 Primeira release real: tag v1.0.0 pushed → workflow verde →
       Release publicado no GitHub
