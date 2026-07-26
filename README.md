@@ -42,6 +42,14 @@ sac attach                                  # attach to the tmux session
 sac down                                    # stop everything: harnesses, daemon and tmux session
 ```
 
+## Beginner's Guide
+
+New to SAC? A detailed step-by-step walkthrough covers installation,
+configuration, the daemon and mailbox system, named loops, agent contract
+prompts, the `sac init` wizard, and every-day commands.
+
+→ [docs/beginner-guide.md](docs/beginner-guide.md)
+
 ## Concepts
 
 - **CCB-style layout (`[windows]`)**: group agents into named tmux windows with
