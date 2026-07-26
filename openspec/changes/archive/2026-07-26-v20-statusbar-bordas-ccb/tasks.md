@@ -14,4 +14,4 @@
 
 ## 3. Fechamento
 - [x] 3.1 Suíte completa verde + `openspec validate v20-statusbar-bordas-ccb`
-- [ ] 3.2 Validação ao vivo: `sac up` em sessão de teste, conferir status bar e moldura de panes
+- [x] 3.2 Validação ao vivo: `sac up` em sessão de teste, conferir status bar e moldura de panes
