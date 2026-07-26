@@ -133,6 +133,19 @@ prompts, the `sac init` wizard, and every-day commands.
 - **Filesystem state**: everything lives in `.sac/` (inbox/claimed/done +
   log.jsonl) plus the tmux session. Crash of SAC or the daemon takes nothing
   down; `sac up` is idempotent.
+- **Long-term memory**: `sac memory` keeps per-workspace memory in
+  `.sac/memory.db` (SQLite stdlib + FTS5, degraded to `LIKE` when FTS5 is
+  unavailable). Kinds are `tarefa`, `lição` and `referência`, with importance
+  1–5. Subcommands: `remember`, `recall` (FTS5-ranked or chronological),
+  `revise` (supersedes), `forget`/`restore` (soft-delete — never a physical
+  DELETE), `decay` (deterministic pruning), `export` (Markdown, `--history`
+  for the audit trail) and `pack` (budgeted injection block). The active
+  memories are injected into the leader contract between
+  `<!-- SAC-MEMORY:BEGIN/END -->` markers — rewritten idempotently by
+  `sac up` and after every memory write; contracts without markers are never
+  touched. The leader is the curator: register with `remember`, consult with
+  `recall` before deciding, prune with `forget`/`revise`/`decay`; every
+  state change is audited in the `history` table.
 - **Configuration**: `.sac/sac.toml` declares exactly one leader, the
   auxiliaries and named loops (legacy `./sac.toml` is ignored since v25).
   The session-level `boot_wait` (default 8s) controls how long

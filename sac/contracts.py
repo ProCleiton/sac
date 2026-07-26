@@ -3,9 +3,13 @@
 Cada contrato = corpo de mensageria SAC (protocolo inbox/`sac next`/reply/
 `sac done`) + seção de disciplina do papel. Texto puro em pt-BR: NÃO exige
 plugin superpowers nem CLI openspec instalados — quem tem o plugin reconhece
-as práticas pelos nomes das skills.
+as práticas pelos nomes das skills. O contrato do líder inclui a seção de
+memória de longo prazo (marcadores SAC-MEMORY + instrução de curadoria,
+só com comandos `sac memory`).
 """
 from __future__ import annotations
+
+from .memory import EMPTY_BLOCK
 
 MESSAGING_LEADER = """## Contrato SAC (obrigatório)
 
@@ -49,7 +53,9 @@ _LIDER = {
 - Cobre andamento (`sac send <aux> "status?"`) quando uma tarefa demorar;
   escale ao usuário só bloqueios reais, com opções de decisão.
 - Ao consolidar, verifique evidências (testes rodando, diff revisado) antes
-  de reportar ao usuário.""",
+  de reportar ao usuário."""
+
++ "\n\n" + EMPTY_BLOCK,
 }
 
 _DESENVOLVEDOR = {

@@ -384,6 +384,33 @@ Nada fora do diretório do workspace é tocado, e nenhum processo é morto.
 | `sac doctor` | Diagnóstico read-only do ambiente: Python, tmux, socket, config (informa qual arquivo foi usado, avisa ambiguidade), harnesses e o CLI `openspec` |
 | `sac down` | Desliga tudo: panes dos harnesses (em ordem), daemon (SIGTERM→SIGKILL via pid file) e sessão tmux |
 | `sac uninstall` | Remove `.sac/`, `prompts/` e `sac.toml` legado — recusa com a sessão no ar, exige digitar o nome da sessão |
+| `sac memory <sub>` | Memória de longo prazo do workspace (`.sac/memory.db`): `remember`, `recall`, `revise`, `forget`, `restore`, `decay`, `export`, `pack` |
+
+### 8.1 Memória de longo prazo (`sac memory`)
+
+Agentes não têm memória além da sessão — a menos que registrem. O SAC mantém
+uma memória por workspace em `.sac/memory.db` (SQLite, só stdlib; busca FTS5
+com degradação automática para `LIKE`). Toda memória tem um kind em pt-BR —
+`tarefa`, `lição` ou `referência` — e importância de 1 a 5:
+
+```bash
+sac memory remember tarefa "Migrar esteira para config oculto" -i 4
+sac memory remember lição "Archive OpenSpec exige nomes originais" -c "detalhe..."
+sac memory recall "porta 9000"        # busca FTS5; sem query, as mais recentes
+sac memory revise 7 -c "conteúdo atualizado"   # a antiga fica superada
+sac memory forget 12                  # soft-delete (nunca DELETE físico)
+sac memory restore 12
+sac memory decay --days 30 --dry-run  # poda determinística; sem --dry-run, arquiva
+sac memory export > memoria.md        # Markdown agrupado por kind
+sac memory export --history           # auditoria de toda operação
+```
+
+O líder é o **curador**: o contrato dele ganha uma seção entre os marcadores
+`<!-- SAC-MEMORY:BEGIN/END -->` com as memórias ativas (orçamento de ~4000
+caracteres: tarefas → lições → referências, importância desc). O `sac up` e
+cada escrita do `sac memory` reescrevem só esse trecho — contratos sem os
+marcadores nunca são tocados. Toda mudança de estado fica auditada na tabela
+`history` (visível via `export --history`).
 
 Dica: dentro dos panes, as variáveis `SAC_ROOT` e `SAC_CONFIG` já estão
 setadas — comandos `sac` funcionam de qualquer diretório dentro da sessão.

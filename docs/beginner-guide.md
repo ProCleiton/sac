@@ -378,6 +378,33 @@ Nothing outside the workspace directory is touched, and no process is killed.
 | `sac doctor` | Read-only environment checkup: Python, tmux, socket, config (reports which file was used, warns on ambiguity), harnesses and the `openspec` CLI |
 | `sac down` | Shuts down everything: harness panes (in order), daemon (SIGTERM→SIGKILL via pid file), and tmux session |
 | `sac uninstall` | Removes `.sac/`, `prompts/` and legacy `sac.toml` — refuses with the session up, requires typing the session name |
+| `sac memory <sub>` | Per-workspace long-term memory (`.sac/memory.db`): `remember`, `recall`, `revise`, `forget`, `restore`, `decay`, `export`, `pack` |
+
+### 8.1 Long-term memory (`sac memory`)
+
+Agents have no memory beyond the session — unless they record it. SAC keeps
+per-workspace memory in `.sac/memory.db` (SQLite, stdlib only; FTS5 search
+with automatic fallback to `LIKE`). Every memory has a kind — `tarefa`
+(task), `lição` (lesson) or `referência` (reference) — and importance 1–5:
+
+```bash
+sac memory remember tarefa "Migrate pipeline to hidden config" -i 4
+sac memory remember lição "OpenSpec archive requires original scenario names"
+sac memory recall "port 9000"         # FTS5 search; without a query, most recent
+sac memory revise 7 -c "updated content"   # the old one becomes superseded
+sac memory forget 12                  # soft-delete (never a physical DELETE)
+sac memory restore 12
+sac memory decay --days 30 --dry-run  # deterministic pruning; without --dry-run, archives
+sac memory export > memory.md         # Markdown grouped by kind
+sac memory export --history           # audit trail of every operation
+```
+
+The leader is the **curator**: its contract gains a section between the
+`<!-- SAC-MEMORY:BEGIN/END -->` markers with the active memories (~4000-char
+budget: tasks → lessons → references, importance desc). `sac up` and every
+`sac memory` write rewrite only that section — contracts without the markers
+are never touched. Every state change is audited in the `history` table
+(visible via `export --history`).
 
 Tip: inside panes, the `SAC_ROOT` and `SAC_CONFIG` environment variables are
 already set — `sac` commands work from any directory inside the session.
