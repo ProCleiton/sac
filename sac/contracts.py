@@ -3,9 +3,11 @@
 Cada contrato = corpo de mensageria SAC (protocolo inbox/`sac next`/reply/
 `sac done`) + seção de disciplina do papel. Texto puro em pt-BR: NÃO exige
 plugin superpowers nem CLI openspec instalados — quem tem o plugin reconhece
-as práticas pelos nomes das skills. O contrato do líder inclui a seção de
-memória de longo prazo (marcadores SAC-MEMORY + instrução de curadoria,
-só com comandos `sac memory`).
+as práticas pelos nomes das skills. O contrato do líder inclui a disciplina
+de delegação e ciclo de revisão (delegar com `sac send`, cobrar revisão,
+iterar até convergir — substitui os loops declarados removidos na v26b) e a
+seção de memória de longo prazo (marcadores SAC-MEMORY + instrução de
+curadoria, só com comandos `sac memory`).
 """
 from __future__ import annotations
 
@@ -22,7 +24,9 @@ MESSAGING_LEADER = """## Contrato SAC (obrigatório)
   delegou) são concluídas automaticamente — NÃO rode `sac done` nelas.
 - Para delegar a um auxiliar: `sac send <aux> "<tarefa>"`.
 - Para cobrar revisão: `sac send <aux> "<o que revisar>"`.
-- Para falar com o usuário: `sac send user "<mensagem>"`."""
+- Para falar com o usuário: `sac send user "<mensagem>"`.
+- Memória e lições do projeto vivem no `sac memory` — NÃO em AGENTS.md,
+  CLAUDE.md ou .github/ (esses arquivos servem só a sessões sem SAC)."""
 
 MESSAGING_AUX = """## Contrato SAC (obrigatório)
 
@@ -34,7 +38,9 @@ MESSAGING_AUX = """## Contrato SAC (obrigatório)
   3. Rode `sac done <id> "<resumo>"`.
 - **Respostas** que você receber são concluídas automaticamente — NÃO rode
   `sac done` nelas, apenas leia e aja.
-- Se o remetente for `user`, responda com `sac send user "<mensagem>"`."""
+- Se o remetente for `user`, responda com `sac send user "<mensagem>"`.
+- Memória e lições do projeto vivem no `sac memory` — NÃO em AGENTS.md,
+  CLAUDE.md ou .github/ (esses arquivos servem só a sessões sem SAC)."""
 
 _LIDER = {
     "key": "lider",
@@ -50,8 +56,14 @@ _LIDER = {
   e o critério de pronto).
 - Não implemente você mesmo o que pode ser delegado — seu trabalho é
   coordenar, acompanhar respostas e consolidar o resultado final.
+- A forma de delegar é `sac send <aux> "<tarefa>"`: uma tarefa por mensagem,
+  com o critério de pronto explícito.
+- Ciclo de revisão: ao receber o trabalho de um auxiliar, cobre revisão —
+  revise você mesmo ou delegue a um auxiliar revisor — e devolva com os
+  ajustes pedidos; iterar delegação → revisão → correção até convergir para
+  o critério de pronto.
 - Cobre andamento (`sac send <aux> "status?"`) quando uma tarefa demorar;
-  escale ao usuário só bloqueios reais, com opções de decisão.
+  escalar ao usuário só em bloqueio real, com opções de decisão.
 - Ao consolidar, verifique evidências (testes rodando, diff revisado) antes
   de reportar ao usuário."""
 

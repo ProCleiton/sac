@@ -4,8 +4,8 @@ import unittest
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from sac.commands import cmd_notify, cmd_recv, cmd_run, notify_sweep
-from sac.config import ConfigError, load_config
+from sac.commands import cmd_notify, cmd_recv, notify_sweep
+from sac.config import load_config
 from sac.store import Store
 from sac.tmux import Tmux
 from tests.test_tmux import FakeRunner
@@ -24,11 +24,6 @@ role = "leader"
 name = "dev-1"
 command = "opencode"
 role = "aux"
-
-[[loops]]
-name = "dev-review"
-sequence = ["leader", "dev-1"]
-max_iterations = 3
 """
 
 NOW = datetime.now()
@@ -76,16 +71,6 @@ class NotifyTest(unittest.TestCase):
         })
         t = Tmux("sac-test", runner=r)
         self.assertEqual(cmd_recv(self.cfg, t, "dev-1"), 1)
-
-    def test_run_kicks_loop(self):
-        mid = cmd_run(self.cfg, self.store, self.tmux, "dev-review", "implementar X")
-        self.assertIn("from-user", mid)
-        pending = self.store.pending("leader")
-        self.assertEqual(len(pending), 1)
-
-    def test_run_unknown_loop_fails(self):
-        with self.assertRaises(ConfigError):
-            cmd_run(self.cfg, self.store, self.tmux, "fantasma", "x")
 
     def test_notify_sweep_exception_logged(self):
         from unittest.mock import patch

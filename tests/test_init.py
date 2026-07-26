@@ -63,7 +63,6 @@ class InitTest(unittest.TestCase):
             "",               # agent2 contrato (default: desenvolvedor)
             "opencode-go/deepseek-v4-flash",  # agent2 model
             "",               # agent2 boot_wait
-            "n",              # no loops
             "n",              # no windows
         ]
         rc = _run_init(self.d, inputs)
@@ -81,6 +80,15 @@ class InitTest(unittest.TestCase):
         self.assertEqual(cfg.agents[1].role, "aux")
         prompt_file = self.d / "prompts" / "leader.md"
         self.assertTrue(prompt_file.exists(), "prompt do leader deve ser criado")
+
+    def test_wizard_sem_pergunta_de_loops_e_toml_sem_secao(self):
+        # v26b: loops removidos — wizard não pergunta e o TOML nunca tem [[loops]]
+        saida = []
+        rc = _run_init(self.d, ["sess", "", "8", "1", "lead", "kimi", "", "", "n"], saida)
+        self.assertEqual(rc, 0)
+        self.assertNotIn("loops", "\n".join(saida).lower())
+        toml = (self.d / ".sac" / "sac.toml").read_text(encoding="utf-8")
+        self.assertNotIn("[[loops]]", toml)
 
     def test_init_no_tty(self):
         saida = []
@@ -158,7 +166,7 @@ class InitTest(unittest.TestCase):
         inputs = [
             "test", "", "5", "1",
             "lead", "kimi", "esteira/k3", "",
-            "n", "n",
+            "n",
         ]
         d = Path(tempfile.mkdtemp())
         _run_init(d, inputs)
@@ -170,7 +178,7 @@ class InitTest(unittest.TestCase):
             "rt-sess", "", "6", "2",
             "lead", "kimi", "k3", "",
             "dev1", "opencode", "", "deepseek-v4", "",
-            "n", "n",
+            "n",
         ]
         d = Path(tempfile.mkdtemp())
         rc = _run_init(d, inputs)
@@ -203,7 +211,7 @@ class InitTest(unittest.TestCase):
 
     def test_init_rejects_invalid_name(self):
         d = Path(tempfile.mkdtemp())
-        rc = _run_init(d, ["test", "", "5", "1", 'lead"bad', "lead-clean", "kimi", "", "", "n", "n"])
+        rc = _run_init(d, ["test", "", "5", "1", 'lead"bad', "lead-clean", "kimi", "", "", "n"])
         self.assertEqual(rc, 0)
         cfg = load_config(d / ".sac" / "sac.toml")
         self.assertEqual(cfg.agents[0].name, "lead-clean")
@@ -215,7 +223,6 @@ class InitTest(unittest.TestCase):
         inputs = [
             "p-sess", "", "5", "1",
             "leader", "kimi", "", "",
-            "n",  # loops
             "n",  # windows
             "n",  # prompts: não sobrescrever
         ]
@@ -233,7 +240,7 @@ class InitWizardUxTest(unittest.TestCase):
 
     def test_abertura_explica_o_que_sera_gerado(self):
         saida = []
-        rc = _run_init(self.d, ["sess", "", "8", "1", "lead", "kimi", "", "", "n", "n"], saida)
+        rc = _run_init(self.d, ["sess", "", "8", "1", "lead", "kimi", "", "", "n"], saida)
         self.assertEqual(rc, 0)
         texto = "\n".join(saida)
         self.assertIn(".sac/sac.toml", texto)
@@ -243,7 +250,7 @@ class InitWizardUxTest(unittest.TestCase):
 
     def test_hints_com_exemplos_concretos(self):
         saida = []
-        _run_init(self.d, ["sess", "", "8", "1", "lead", "kimi", "", "", "n", "n"], saida)
+        _run_init(self.d, ["sess", "", "8", "1", "lead", "kimi", "", "", "n"], saida)
         texto = "\n".join(saida)
         for trecho in ("ex.: esteira", "~/.sac-", "10 a 15", "ex.: leader, dev-1"):
             self.assertIn(trecho, texto, f"hint com exemplo ausente: {trecho!r}")
@@ -253,7 +260,7 @@ class InitWizardUxTest(unittest.TestCase):
         _run_init(self.d, ["sess", "", "8", "2",
                            "lead", "kimi", "", "",
                            "dev-1", "opencode", "", "", "",
-                           "n", "n"], saida)
+                           "n"], saida)
         texto = "\n".join(saida)
         self.assertIn("--- Agente 1 (leader", texto)
         self.assertIn("delega aos demais", texto)
@@ -263,7 +270,7 @@ class InitWizardUxTest(unittest.TestCase):
         _run_init(self.d, ["sess", "", "8", "2",
                            "lead", "kimi", "", "",
                            "dev-1", "opencode", "", "", "",
-                           "n", "n"], saida)
+                           "n"], saida)
         texto = "\n".join(saida)
         self.assertNotIn("Papel (leader/aux)", texto, "pergunta de papel foi removida")
         self.assertIn("--- Agente 2 (aux) ---", texto)
@@ -285,14 +292,14 @@ class InitHarnessDetectionTest(unittest.TestCase):
 
     def test_kimi_detectado_vira_default(self):
         cfg, texto = self._collect(
-            ["sess", "", "8", "1", "lead", "", "k3", "", "n", "n"],
+            ["sess", "", "8", "1", "lead", "", "k3", "", "n"],
             lambda c: "/usr/bin/kimi" if c == "kimi" else None)
         self.assertEqual(cfg.agents[0].command, "kimi")
         self.assertIn("detectado no seu PATH", texto)
 
     def test_opencode_preferido_quando_kimi_ausente(self):
         cfg, texto = self._collect(
-            ["sess", "", "8", "1", "lead", "", "k3", "", "n", "n"],
+            ["sess", "", "8", "1", "lead", "", "k3", "", "n"],
             lambda c: None if c == "kimi" else f"/usr/bin/{c}")
         self.assertEqual(cfg.agents[0].command, "opencode",
                          "opencode tem preferência sobre claude")
@@ -303,7 +310,7 @@ class InitHarnessDetectionTest(unittest.TestCase):
             ["sess", "", "8", "2",
              "lead", "", "n", "k3", "",
              "dev", "", "n", "", "", "",
-             "n", "n"],
+             "n"],
             lambda c: None)
         self.assertEqual(cfg.agents[0].command, "kimi", "placeholder do agente 1")
         self.assertEqual(cfg.agents[1].command, "opencode", "placeholder dos demais")
@@ -331,9 +338,15 @@ class InitContractsTest(unittest.TestCase):
                 self.assertIn(trecho, c["mensageria"], f"{c['key']}: mensageria sem {trecho!r}")
             self.assertTrue(c["disciplina"].startswith("## Disciplina"), c["key"])
 
+    def test_contratos_apontam_memoria_para_o_sac_memory(self):
+        for c in CONTRACTS:
+            self.assertIn("sac memory", c["mensageria"], c["key"])
+            self.assertIn("AGENTS.md", c["mensageria"],
+                          f"{c['key']}: deve orientar que lições NÃO vivem em AGENTS.md")
+
     def test_agente1_recebe_contrato_lider_sem_pergunta(self):
         saida = []
-        rc = _run_init(self.d, ["sess", "", "8", "1", "lead", "kimi", "", "", "n", "n"], saida)
+        rc = _run_init(self.d, ["sess", "", "8", "1", "lead", "kimi", "", "", "n"], saida)
         self.assertEqual(rc, 0)
         texto = "\n".join(saida)
         self.assertNotIn("Contrato (papel)", texto, "agente 1 não recebe pergunta de catálogo")
@@ -347,7 +360,7 @@ class InitContractsTest(unittest.TestCase):
         rc = _run_init(self.d, ["sess", "", "8", "2",
                                 "lead", "kimi", "", "",
                                 "dev-1", "opencode", "", "", "",
-                                "n", "n"], saida)
+                                "n"], saida)
         self.assertEqual(rc, 0)
         texto = "\n".join(saida)
         self.assertIn("1. desenvolvedor", texto)
@@ -363,7 +376,7 @@ class InitContractsTest(unittest.TestCase):
         rc = _run_init(self.d, ["sess", "", "8", "2",
                                 "lead", "kimi", "", "",
                                 "dev-1", "opencode", "9", "2", "", "",
-                                "n", "n"], saida)
+                                "n"], saida)
         self.assertEqual(rc, 0)
         texto = "\n".join(saida)
         self.assertIn("entrada inválida", texto)
@@ -374,13 +387,23 @@ class InitContractsTest(unittest.TestCase):
         rc = _run_init(self.d, ["sess", "", "8", "2",
                                 "lead", "kimi", "", "",
                                 "rev", "opencode", "2", "", "",
-                                "n", "n"])
+                                "n"])
         self.assertEqual(rc, 0)
         content = (self.d / "prompts" / "rev.md").read_text(encoding="utf-8")
         for trecho in ("sac done", "SAC_DONE", "sac send", "bloqueantes", "warnings"):
             self.assertIn(trecho, content, f"contrato do revisor sem {trecho!r}")
         for ref in ("superpowers", "openspec", "pip install", "npm i"):
             self.assertNotIn(ref, content, "contrato não pode exigir plugin/CLI externo")
+
+    def test_contrato_lider_tem_disciplina_de_delegacao_e_revisao(self):
+        # v26b: delegação e ciclo de revisão viram disciplina do contrato do
+        # líder (substituem os loops declarados removidos)
+        lider = next(c for c in CONTRACTS if c["key"] == LEADER_CONTRACT)
+        disc = lider["disciplina"]
+        for trecho in ("sac send", "delegar", "revisão", "iterar", "escalar"):
+            self.assertIn(trecho, disc, f"contrato do líder sem {trecho!r}")
+        for ref in ("superpowers", "openspec", "pip install", "npm i"):
+            self.assertNotIn(ref, disc, "contrato não pode exigir plugin/CLI externo")
 
     def test_aux_contracts_sem_lider(self):
         from sac.contracts import AUX_CONTRACTS
@@ -434,7 +457,7 @@ class InitModelListTest(unittest.TestCase):
 
     def test_wizard_resposta_por_numero(self):
         with patch("sac.init._list_models", return_value=["m1", "m2"]):
-            rc = _run_init(self.d, ["sess", "", "8", "1", "lead", "kimi", "2", "", "n", "n"])
+            rc = _run_init(self.d, ["sess", "", "8", "1", "lead", "kimi", "2", "", "n"])
         self.assertEqual(rc, 0)
         cfg = load_config(self.d / ".sac" / "sac.toml")
         self.assertEqual(cfg.agents[0].args, ["--model", "m2"])
@@ -442,7 +465,7 @@ class InitModelListTest(unittest.TestCase):
     def test_wizard_numero_invalido_repete(self):
         with patch("sac.init._list_models", return_value=["m1", "m2"]):
             saida = []
-            rc = _run_init(self.d, ["sess", "", "8", "1", "lead", "kimi", "9", "1", "", "n", "n"], saida)
+            rc = _run_init(self.d, ["sess", "", "8", "1", "lead", "kimi", "9", "1", "", "n"], saida)
         self.assertEqual(rc, 0)
         self.assertIn("entrada inválida", "\n".join(saida))
         cfg = load_config(self.d / ".sac" / "sac.toml")
@@ -450,14 +473,14 @@ class InitModelListTest(unittest.TestCase):
 
     def test_wizard_enter_nao_passa_model(self):
         with patch("sac.init._list_models", return_value=["m1", "m2"]):
-            rc = _run_init(self.d, ["sess", "", "8", "1", "lead", "kimi", "", "", "n", "n"])
+            rc = _run_init(self.d, ["sess", "", "8", "1", "lead", "kimi", "", "", "n"])
         self.assertEqual(rc, 0)
         cfg = load_config(self.d / ".sac" / "sac.toml")
         self.assertEqual(cfg.agents[0].args, [])
 
     def test_wizard_sem_lista_cai_em_texto_livre(self):
         # patch do módulo (setUpModule) já retorna [] → pergunta de texto livre
-        rc = _run_init(self.d, ["sess", "", "8", "1", "lead", "kimi", "k3", "", "n", "n"])
+        rc = _run_init(self.d, ["sess", "", "8", "1", "lead", "kimi", "k3", "", "n"])
         self.assertEqual(rc, 0)
         cfg = load_config(self.d / ".sac" / "sac.toml")
         self.assertEqual(cfg.agents[0].args, ["--model", "k3"])
@@ -475,26 +498,26 @@ class InitWindowsTest(unittest.TestCase):
             return _run_init(self.d, inputs, saida)
 
     def test_resposta_nao_nao_gera_windows(self):
-        rc = self._run(["n", "n"])
+        rc = self._run(["n"])
         self.assertEqual(rc, 0)
         toml = (self.d / ".sac" / "sac.toml").read_text(encoding="utf-8")
         self.assertNotIn("[windows]", toml)
 
     def test_janela_lado_a_lado(self):
-        rc = self._run(["n", "s", "dev", "dev-1 dev-2", "1", "n"])
+        rc = self._run(["s", "dev", "dev-1 dev-2", "1", "n"])
         self.assertEqual(rc, 0)
         cfg = load_config(self.d / ".sac" / "sac.toml")
         self.assertEqual(cfg.windows["dev"], "dev-1;dev-2")
 
     def test_janela_empilhada(self):
-        rc = self._run(["n", "s", "dev", "dev-1 dev-2", "2", "n"])
+        rc = self._run(["s", "dev", "dev-1 dev-2", "2", "n"])
         self.assertEqual(rc, 0)
         cfg = load_config(self.d / ".sac" / "sac.toml")
         self.assertEqual(cfg.windows["dev"], "dev-1,dev-2")
 
     def test_agente_desconhecido_rejeitado(self):
         saida = []
-        rc = self._run(["n", "s", "dev", "dev-9", "dev-1 dev-2", "1", "n"], saida)
+        rc = self._run(["s", "dev", "dev-9", "dev-1 dev-2", "1", "n"], saida)
         self.assertEqual(rc, 0)
         texto = "\n".join(saida)
         self.assertIn("desconhecidos: dev-9", texto)
@@ -504,14 +527,14 @@ class InitWindowsTest(unittest.TestCase):
 
     def test_preview_exibido(self):
         saida = []
-        rc = self._run(["n", "s", "dev", "dev-1 dev-2", "1", "n"], saida)
+        rc = self._run(["s", "dev", "dev-1 dev-2", "1", "n"], saida)
         self.assertEqual(rc, 0)
         texto = "\n".join(saida)
         self.assertIn("preview do layout", texto)
         self.assertIn('dev = "dev-1;dev-2"', texto)
 
     def test_agente_fora_de_janela_mantem_janela_propria(self):
-        rc = self._run(["n", "s", "dev", "dev-1 dev-2", "1", "n"])
+        rc = self._run(["s", "dev", "dev-1 dev-2", "1", "n"])
         self.assertEqual(rc, 0)
         cfg = load_config(self.d / ".sac" / "sac.toml")
         self.assertEqual(cfg.windows["lead"], "lead",
@@ -539,22 +562,22 @@ class InitHintTest(unittest.TestCase):
         inputs = [
             "sess", "", "8", "1",
             "lead", "kimi", "k3", "",
-            "n", "n",
+            "n",
         ]
         saida = []
         with patch("sac.init.shutil.which", return_value="/usr/bin/kimi"):
             _collect_config(stdin=FakeInput(inputs), stdout=saida.append)
         texto = "\n".join(saida)
         # um hint por pergunta do questionário (sessão, socket, boot_wait,
-        # nº agentes, nome, comando, modelo, boot_wait específico, loops)
+        # nº agentes, nome, comando, modelo, boot_wait específico, janelas)
         for trecho in ("tmux ls", "socket", "antes de injetar", "agentes",
-                       "sac send", "PATH", "--model", "global", "ciclo"):
+                       "sac send", "PATH", "--model", "global", "janelas"):
             self.assertIn(trecho, texto, f"hint ausente contendo: {trecho!r}")
 
 
 class InitHarnessValidationTest(unittest.TestCase):
     def _inputs(self, command_flow):
-        return ["sess", "", "8", "1", "lead", *command_flow, "k3", "", "n", "n"]
+        return ["sess", "", "8", "1", "lead", *command_flow, "k3", "", "n"]
 
     def test_comando_ausente_warning_e_seguir(self):
         saida = []
@@ -587,7 +610,7 @@ class InitHarnessValidationTest(unittest.TestCase):
 class InitOnboardingTest(unittest.TestCase):
     def test_init_imprime_checklist_pos_criacao(self):
         d = Path(tempfile.mkdtemp())
-        inputs = ["sess", "", "8", "1", "lead", "kimi", "k3", "", "n", "n"]
+        inputs = ["sess", "", "8", "1", "lead", "kimi", "k3", "", "n"]
         saida = []
         rc = _run_init(d, inputs, saida)
         self.assertEqual(rc, 0)
@@ -614,7 +637,6 @@ class InitWorkspaceTest(unittest.TestCase):
             "kimi",           # command
             "k3",             # model (papel leader automático)
             "",               # boot_wait
-            "n",              # no loops
             "n",              # no windows
         ]
         rc = _run_init(d, inputs)
@@ -644,7 +666,6 @@ class InitWorkspaceTest(unittest.TestCase):
             "opencode",
             "",               # model vazio
             "",               # boot_wait
-            "n",
             "n",
         ]
         rc = _run_init(d, inputs)

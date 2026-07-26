@@ -56,7 +56,7 @@ Tudo parte de um único arquivo de configuração. Desde a v24 o local padrão �
 `.sac/sac.toml` (dentro do diretório oculto de estado); um `sac.toml` legado na
 raiz do workspace é **ignorado** desde a v25 — a ordem de descoberta é: flag
 `--config` → `$SAC_CONFIG` → `./.sac/sac.toml`. Para migrar um workspace
-antigo: `mkdir -p .sac && mv sac.toml .sac/`. Quatro seções:
+antigo: `mkdir -p .sac && mv sac.toml .sac/`. Três seções:
 
 ### 3.1 `[session]` — a sessão tmux
 
@@ -105,10 +105,6 @@ uma **sidebar viva** à esquerda (árvore de janelas → agentes, badges de inbo
 tempo ocioso, últimos eventos). A janela `dash` é sempre criada. Sem `[windows]`,
 vale o layout legado de uma janela por agente.
 
-### 3.4 `[[loops]]` — ciclos nomeados
-
-Ver seção 5.
-
 ---
 
 ## 4. O sistema de entrega (mailbox + daemon)
@@ -150,35 +146,18 @@ O coração do SAC é uma **caixa de correio em filesystem**, dentro de `.sac/`:
 
 ---
 
-## 5. Loops (o sistema de "entrega" de ciclos)
+## 5. Loops — removidos na v26b (breaking change)
 
-Um `[[loop]]` é um **atalho nomeado** para disparar uma sequência de agentes:
+Os loops declarados (`[[loops]]` + o comando `sac run`) foram **removidos na
+v26b**, sem período de deprecação: um config contendo `[[loops]]` para de
+carregar com um erro claro — remova a seção do seu `sac.toml`.
 
-```toml
-[[loops]]
-name = "dev-review"
-sequence = ["lead", "dev-1", "auditor"]
-max_iterations = 5
-```
-
-Dispara-se com:
-
-```bash
-sac run dev-review "feature Y"
-```
-
-**Ponto crucial para iniciantes**: o SAC **não enforce** o loop. Ele não força
-o auditor a revisar, não conta iterações, não bloqueia nada. O loop real
-acontece porque os **contratos de prompt** mandam — por exemplo, o contrato do
-lead-coordinator o obriga a:
-
-1. delegar implementação ao dev;
-2. enviar o resultado ao `code-auditor` (gate de revisão);
-3. se REPROVADO, re-delegar ao dev (máx. 3 iterações);
-4. se APROVADO, seguir para os próximos gates (docs → secops → usuário → deploy).
-
-Ou seja: o `[[loops]]` é **declaração + convenção**; a disciplina está nos
-prompts. `max_iterations` documenta a intenção, quem impõe o limite é o contrato.
+A delegação e os ciclos de revisão viraram **disciplina do contrato do líder**:
+o líder decompõe o trabalho, delega com `sac send <aux> "<tarefa>"`, cobra
+revisão do trabalho dos auxiliares (revisando ele mesmo ou delegando a um aux
+revisor) e itera delegar → revisar → corrigir até o resultado convergir —
+escalando ao usuário só em bloqueio real. O contrato de líder gerado
+(`prompts/<lider>.md`) já traz essa disciplina; nada mais é necessário.
 
 ---
 
@@ -298,9 +277,7 @@ SAC init — este wizard gera:
    - modelo (opcional; se preenchido, gera `args = ["--model", "<modelo>"]`;
      para `opencode` o wizard já acrescenta `--auto` automaticamente);
    - boot wait específico (Enter = usa o global).
-5. **Loops** (opcional): nome, sequência de agentes separada por espaço
-   (default: todos os aux), e `max_iterations` (default 3).
-6. **Agrupamento em janelas** (opcional, default não): por janela — nome,
+5. **Agrupamento em janelas** (opcional, default não): por janela — nome,
    agentes (separados por espaço, validados contra os criados) e disposição
    (`1` lado a lado → `;`, `2` empilhados → `,`), com preview antes de
    perguntar pela próxima janela. Agentes fora de qualquer janela ficam com
@@ -372,7 +349,6 @@ Nada fora do diretório do workspace é tocado, e nenhum processo é morto.
 | `sac up` | Sobe a sessão tmux com todos os agentes (idempotente, com barra de progresso 0–100% e log por agente) |
 | `sac send <agente> "msg"` | Envia tarefa/mensagem |
 | `sac send user "msg"` | Fala com o humano (ele lê via `sac log`) — funciona sem configurar "user" como agente |
-| `sac run <loop> "tarefa"` | Dispara um loop declarado |
 | `sac recv <agente>` | Lê uma resposta (até `SAC_DONE`) |
 | `sac status` / `--mini` | Visão geral / resumo de uma linha (`2● 1!`) para a status bar |
 | `sac status --clean [--yes]` | Lista/remove inbox+claimed órfãos de agentes que saíram do `sac.toml` (dry-run por padrão) |

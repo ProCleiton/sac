@@ -1619,6 +1619,14 @@ class DoctorTest(unittest.TestCase):
         self.assertEqual(rc, 0)
         self.assertIn(f"config loads ({self.d / 'sac.toml'}", out)
 
+    def test_linha_config_sem_contagem_de_loops(self):
+        # v26b: loops removidos — a linha do config reporta só os agentes
+        rc, out = self._run()
+        self.assertEqual(rc, 0)
+        linha = next(ln for ln in out.splitlines() if "config loads" in ln)
+        self.assertIn(f"({self.d / 'sac.toml'}, 2 agents)", linha)
+        self.assertNotIn("loops", linha)
+
     def test_legado_na_raiz_warn_ignorado(self):
         (self.d / ".sac").mkdir()
         (self.d / ".sac" / "sac.toml").write_text(VALID, encoding="utf-8")

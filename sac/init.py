@@ -8,7 +8,7 @@ import tomllib
 from pathlib import Path
 from typing import Callable
 
-from .config import AgentConfig, Config, LoopConfig
+from .config import AgentConfig, Config
 from .contracts import AUX_CONTRACTS, CONTRACTS, DEFAULT_AUX_CONTRACT, LEADER_CONTRACT
 
 KIMI_NOTE = """- Kimi Code: respostas longas e analíticas.
@@ -223,21 +223,6 @@ def _collect_config(stdin, stdout) -> Config:
             boot_wait=boot_wait_agent, contract=contract["key"],
         ))
 
-    loops = []
-    add_loops = _ask("Adicionar loops? (s/N)", "n", stdin, stdout,
-                     hint="loops encadeiam agentes em ciclo (ex.: dev → revisor)")
-    if add_loops.lower() == "s":
-        n_loops = int(_ask("Quantos loops", "1", stdin, stdout, validate=lambda v: v.isdigit()))
-        for i in range(n_loops):
-            stdout(f"\n--- Loop {i+1} ---")
-            lname = _ask("Nome do loop", f"loop-{i+1}", stdin, stdout, validate=_valid_name)
-            seq = _ask("Sequência (nomes separados por espaço)", " ".join(a.name for a in agents if a.role == "aux"), stdin, stdout,
-                       hint="ordem dos agentes no ciclo")
-            sequence = [s.strip() for s in seq.split() if s.strip()]
-            max_it = int(_ask("Max iterações", "3", stdin, stdout, validate=lambda v: v.isdigit(),
-                              hint="limite de voltas do ciclo antes de escalar ao leader"))
-            loops.append(LoopConfig(name=lname, sequence=sequence, max_iterations=max_it))
-
     windows = _ask_windows(stdin, stdout, agents)
     if windows:
         # o config exige todos os agentes nos specs: quem ficou de fora ganha janela própria
@@ -252,7 +237,6 @@ def _collect_config(stdin, stdout) -> Config:
         socket=socket if socket else None,
         windows=windows,
         agents=agents,
-        loops=loops,
     )
 
 
@@ -282,12 +266,6 @@ def _generate_toml(cfg: Config) -> str:
         lines.append(f'prompt_file = "prompts/{a.name}.md"')
         if a.boot_wait is not None:
             lines.append(f"boot_wait = {a.boot_wait}")
-        lines.append("")
-    for l in cfg.loops:
-        lines.append("[[loops]]")
-        lines.append(f'name = "{l.name}"')
-        lines.append(f'sequence = {l.sequence}')
-        lines.append(f"max_iterations = {l.max_iterations}")
         lines.append("")
     return "\n".join(lines).strip() + "\n"
 

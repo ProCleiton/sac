@@ -33,7 +33,6 @@ sac sidebar --toggle                        # toggle the sidebar pane in the cur
 sac sidebar --watch                         # in-place live sidebar (used by the sidebar panes)
 sac send leader "implement X"               # task the leader
 sac send user "report"                      # message the human (read via sac log)
-sac run dev-review "feature Y"              # kick off a declared loop
 sac recv dev-1                              # read a reply (up to SAC_DONE)
 sac daemon                                  # run the delivery daemon (auto-started on dash)
 sac kill <agent>                            # restart a stuck harness (re-injects prompt, re-alerts claimed tasks)
@@ -47,7 +46,7 @@ sac uninstall                               # remove .sac/, prompts/ and legacy 
 ## Beginner's Guide
 
 New to SAC? A detailed step-by-step walkthrough covers installation,
-configuration, the daemon and mailbox system, named loops, agent contract
+configuration, the daemon and mailbox system, agent contract
 prompts, the `sac init` wizard, and every-day commands.
 
 → [docs/beginner-guide.md](docs/beginner-guide.md)
@@ -146,14 +145,18 @@ prompts, the `sac init` wizard, and every-day commands.
   touched. The leader is the curator: register with `remember`, consult with
   `recall` before deciding, prune with `forget`/`revise`/`decay`; every
   state change is audited in the `history` table.
-- **Configuration**: `.sac/sac.toml` declares exactly one leader, the
-  auxiliaries and named loops (legacy `./sac.toml` is ignored since v25).
+- **Configuration**: `.sac/sac.toml` declares exactly one leader and the
+  auxiliaries (legacy `./sac.toml` is ignored since v25).
   The session-level `boot_wait` (default 8s) controls how long
   `sac up` waits before injecting prompts — individual agents can override it
   with `[[agents]] boot_wait = N`. Session geometry is set via `[session]
   width`/`height` (default 220x50) — avoids SIGILL in narrow panes at boot.
-  Loops are not enforced — the workflow lives in each agent's contract prompt
-  (`prompts/`).
+  The workflow lives in each agent's contract prompt (`prompts/`).
+  **Breaking change (v26b)**: declared loops (`[[loops]]`) and the `sac run`
+  command were removed — a config containing `[[loops]]` fails to load with a
+  clear error (remove the section). Delegation and review cycles are now the
+  leader contract's discipline (delegate with `sac send`, demand review,
+  iterate until convergence).
 - **Harness recovery**: `sac kill <agent>` restarts a stuck harness in-place —
   kills the process, recreates the pane from the sidebar, re-injects the prompt
   file, and re-alerts any pending claimed tasks. If the pane is already dead
@@ -183,17 +186,20 @@ how to do keeps working, untouched.
   | Concern | Owner | Where |
   |---------|-------|-------|
   | Plugins, skills, login, model, harness flags | you | the harness's own config files |
-  | Agents, roles, layout, socket, loops | SAC | `.sac/sac.toml` |
+  | Agents, roles, layout, socket | SAC | `.sac/sac.toml` |
   | Agent behavior (contracts, workflow) | you | `prompts/*.md` |
 
 - **Pre-warm before the first `sac up`**: run the harness once in the workspace
   directory (e.g. `kimi .`) to approve logins, plugins and interactive consents.
   SAC does not — and should not — answer harness dialogs.
-- **Long-term memory lives in files**: memory shared across agents belongs in
-  workspace files (`AGENTS.md`, `handoff/`, `docs/`) — any harness can read
-  Markdown. Harness memory plugins are per-harness and per-process; they don't
-  share across agents. The discipline of reading and recording lives in the
-  prompt contracts (SAC delivers letters; behavior is in the manuals).
+- **Long-term memory lives in SAC**: pipeline memory (tasks, lessons,
+  references) lives in `.sac/memory.db` — managed via `sac memory` and curated
+  by the leader. `AGENTS.md`/`CLAUDE.md` still matter, but only when you run
+  the harness WITHOUT SAC (direct sessions); the canonical contracts never
+  tell agents to manage those files. Harness memory plugins are per-harness
+  and per-process; they don't share across agents. The discipline of reading
+  and recording lives in the prompt contracts (SAC delivers letters; behavior
+  is in the manuals).
 - **Stupid on purpose**: SAC doesn't configure the harness, doesn't orchestrate
   your workflow, doesn't impose anything — it just delivers messages. All the
   intelligence lives in the contracts and in each layer's own config.
