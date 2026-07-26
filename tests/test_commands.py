@@ -1548,11 +1548,16 @@ class DoctorTest(unittest.TestCase):
         self.saida = []
 
     def _run(self, **kwargs):
+        from sac.plugins_manifest import PLUGINS
         self.saida = []
         kwargs.setdefault("stdout", self.saida.append)
         kwargs.setdefault("which", lambda cmd: f"/usr/bin/{cmd}")
         kwargs.setdefault("tmux_version", lambda: "tmux 3.4")
         kwargs.setdefault("py_version", (3, 12, 5))
+        kwargs.setdefault("plugins_status", lambda: [
+            {"nome": p["nome"], "ref": p["ref"], "instalado": True,
+             "ref_atual": p["ref"], "alvo": True, "sincronizado": True}
+            for p in PLUGINS])
         rc = self.cmd_doctor(kwargs.pop("config_path", self.d / "sac.toml"), **kwargs)
         return rc, "\n".join(self.saida)
 
@@ -1656,6 +1661,40 @@ class DoctorTest(unittest.TestCase):
         rc, out = self._run()
         self.assertEqual(rc, 0)
         self.assertIn("[OK]  openspec found in PATH", out)
+
+    def test_plugins_canonicos_ok(self):
+        rc, out = self._run()
+        self.assertEqual(rc, 0)
+        self.assertIn("[OK]  plugin superpowers @ v6.1.1", out)
+        self.assertIn("[OK]  plugin rtk @ v0.43.0", out)
+        self.assertIn("[OK]  plugin openspec @ v1.6.0", out)
+
+    def test_plugins_ausentes_warn_sem_falhar(self):
+        from sac.plugins_manifest import PLUGINS
+        ausentes = lambda: [
+            {"nome": p["nome"], "ref": p["ref"], "instalado": False,
+             "ref_atual": None, "alvo": False, "sincronizado": False}
+            for p in PLUGINS]
+        rc, out = self._run(plugins_status=ausentes)
+        self.assertEqual(rc, 0, "plugins ausentes são warnings, não falham")
+        for p in PLUGINS:
+            self.assertIn(f"[WARN] plugin {p['nome']} não instalado", out)
+        self.assertIn("sac plugins install", out)
+
+    def test_plugin_dessincronizado_warn(self):
+        from sac.plugins_manifest import PLUGINS
+        def status():
+            out = []
+            for p in PLUGINS:
+                dessinc = p["nome"] == "rtk"
+                out.append({"nome": p["nome"], "ref": p["ref"], "instalado": True,
+                            "ref_atual": "v0.0.1" if dessinc else p["ref"],
+                            "alvo": True, "sincronizado": not dessinc})
+            return out
+        rc, out = self._run(plugins_status=status)
+        self.assertEqual(rc, 0)
+        self.assertIn("[WARN] plugin rtk dessincronizado", out)
+        self.assertIn("sac plugins install", out)
 
     def test_sem_config_nenhum_caminho(self):
         rc, out = self._run(config_path=None)
