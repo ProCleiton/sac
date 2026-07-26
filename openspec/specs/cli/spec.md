@@ -318,39 +318,6 @@ tmux).
 - **WHEN** `sac status --mini` executa
 - **THEN** a saída é uma linha vazia e o exit code é 0
 
-### Requirement: Resolução de config via env da sessão
-O sistema SHALL resolver o caminho do config pela ordem de precedência:
-`--config` (flag explícita) > `$SAC_CONFIG` > `./.sac/sac.toml` > `./sac.toml`
-(fallback legado). A env `SAC_CONFIG` permite que comandos `sac` executados
-dentro de panes de agente resolvam a configuração da sessão correta
-independente do cwd; `sac up` SHALL exportar `SAC_CONFIG` com o caminho
-efetivamente usado.
-
-#### Scenario: SAC_CONFIG definido
-- **WHEN** `sac <comando>` é executado sem `--config` e a env `SAC_CONFIG` está definida
-- **THEN** a configuração é carregada do caminho em `SAC_CONFIG`, mesmo que o cwd não contenha config (ou contenha outro)
-
-#### Scenario: SAC_CONFIG ausente
-- **WHEN** `sac <comando>` é executado sem `--config` e sem `SAC_CONFIG` no ambiente
-- **THEN** a configuração é resolvida pela cadeia de diretórios: `./.sac/sac.toml`, depois `./sac.toml` (fallback legado)
-
-#### Scenario: Config oculto é preferido ao legado
-- **WHEN** `./.sac/sac.toml` e `./sac.toml` existem e não há `--config` nem `SAC_CONFIG`
-- **THEN** a configuração é carregada de `./.sac/sac.toml`
-
-#### Scenario: Fallback legado
-- **WHEN** apenas `./sac.toml` existe e não há `--config` nem `SAC_CONFIG`
-- **THEN** a configuração é carregada de `./sac.toml` (esteiras antigas não quebram)
-
-#### Scenario: --config explícito tem precedência
-- **WHEN** `sac --config /caminho/x.toml <comando>` é executado com `SAC_CONFIG` definido
-- **THEN** a configuração é carregada de `/caminho/x.toml`
-
-#### Scenario: Nenhum config encontrado
-- **WHEN** nenhum dos caminhos da cadeia existe
-- **THEN** o sistema imprime erro indicando os caminhos tentados e sugere `sac init`
-- **AND** retorna exit 1
-
 ### Requirement: Comando doctor — diagnóstico do ambiente
 
 O sistema SHALL expor o comando `sac doctor` que verifica os pré-requisitos do
@@ -369,7 +336,7 @@ alteram o exit code.
 | Socket dir writable | sim | se `socket` configurado, diretório-pai existe e é gravável |
 | Config loads | sim | config resolvido pela cadeia de descoberta é parseável sem erro; saída indica qual arquivo foi usado |
 | Harnesses in PATH | não | cada `command` dos agentes em `[[agents]]` existe no PATH (warning individual) |
-| Config ambiguity | não | `./.sac/sac.toml` e `./sac.toml` coexistem (warning; o `.sac/` vence) |
+| Legado ignorado | não | `./sac.toml` existe na raiz (warning: fallback removido — mover para `.sac/` ou apagar) |
 | openspec CLI | não | `shutil.which("openspec")` não nulo (warning com orientação de instalação — stack canônica) |
 
 #### Formato de saída
@@ -377,10 +344,11 @@ alteram o exit code.
 ```
 [OK]  Python 3.12.5
 [OK]  tmux 3.4
+[OK]  openspec found in PATH
 [OK]  socket dir ~/.sac-esteira is writable
 [OK]  config loads (.sac/sac.toml, 3 agents, 1 loop)
 [WARN] harness 'kimi' not found in PATH (config may be for another machine)
-[WARN] openspec not found in PATH — stack canônica: npm i -g @fission-ai/openspec (ou equivalente)
+[WARN] ./sac.toml existe na raiz mas é ignorado (fallback removido) — mova para .sac/ ou apague
 ```
 
 Itens essenciais com FALHA usam `[FAIL]` e incluem orientação de correção:
@@ -426,6 +394,7 @@ Itens essenciais com FALHA usam `[FAIL]` e incluem orientação de correção:
 - **THEN** itens independentes de config (Python, tmux) rodam normalmente
 - **AND** o item config reporta `[WARN]` (config não encontrada, ignorando
   checagens dependentes)
+- **AND** se `./sac.toml` existir na raiz, o aviso inclui orientação de migração
 - **AND** items dependentes de config (socket, harnesses) são pulados/silenciados
 - **AND** exit code é 0
 
@@ -434,7 +403,8 @@ Itens essenciais com FALHA usam `[FAIL]` e incluem orientação de correção:
 - **GIVEN** `./.sac/sac.toml` e `./sac.toml` existem no diretório
 - **WHEN** `sac doctor` é executado
 - **THEN** o item config indica qual arquivo foi usado (`.sac/sac.toml`)
-- **AND** um `[WARN]` de ambiguidade é exibido
+- **AND** um `[WARN]` informa que o `./sac.toml` da raiz é ignorado (fallback
+  removido) e orienta mover para `.sac/` ou apagar
 
 #### Scenario: doctor — openspec ausente (não essencial)
 
@@ -487,8 +457,9 @@ código, documentação, deploy/release, segurança e auxiliar genérico. Todo
 contrato inclui o protocolo de mensageria SAC (inbox/`sac next`/reply/
 `sac done`) mais a disciplina do papel, em texto puro que NÃO exige plugin ou
 CLI externo instalado. O agente 1 recebe o contrato de líder sem pergunta;
-agentes 2+ escolhem em lista numerada (default: desenvolvedor). O contrato
-gerado em `prompts/<nome>.md` é editável pelo usuário depois do init.
+agentes 2+ escolhem em lista numerada que EXCLUI o papel de líder (só pode
+haver um líder — o agente 1), com default "desenvolvedor". O contrato gerado
+em `prompts/<nome>.md` é editável pelo usuário depois do init.
 
 #### Scenario: agente 1 recebe contrato de líder sem pergunta
 - **GIVEN** o wizard configurando o agente 1
@@ -499,7 +470,8 @@ gerado em `prompts/<nome>.md` é editável pelo usuário depois do init.
 #### Scenario: catálogo numerado para agentes aux
 - **GIVEN** o wizard configurando o agente 2
 - **WHEN** a pergunta de contrato é exibida
-- **THEN** a lista numerada de papéis aparece com default "desenvolvedor"
+- **THEN** a lista numerada NÃO contém "líder/orquestrador"
+- **AND** aparece com default "desenvolvedor"
 - **AND** Enter seleciona o default
 
 #### Scenario: escolha inválida repete a pergunta
@@ -575,4 +547,72 @@ o nome da sessão. Nada fora do diretório do workspace é removido.
 - **WHEN** `sac uninstall` é executado
 - **THEN** o sistema informa que não há nada para remover
 - **AND** retorna exit 0
+
+### Requirement: Descoberta de config
+O sistema SHALL resolver o caminho do config pela ordem de precedência:
+`--config` (flag explícita) > `$SAC_CONFIG` > `./.sac/sac.toml`. Nenhum outro
+caminho é considerado — `./sac.toml` na raiz é ignorado. `sac up` SHALL
+exportar `SAC_CONFIG` com o caminho efetivamente usado.
+
+#### Scenario: SAC_CONFIG definido
+- **WHEN** `sac <comando>` é executado sem `--config` e a env `SAC_CONFIG` está definida
+- **THEN** a configuração é carregada do caminho em `SAC_CONFIG`, mesmo que o cwd não contenha config (ou contenha outro)
+
+#### Scenario: Config oculto encontrado no diretório
+- **WHEN** `./.sac/sac.toml` existe e não há `--config` nem `SAC_CONFIG`
+- **THEN** a configuração é carregada de `./.sac/sac.toml`
+
+#### Scenario: Legado na raiz é ignorado
+- **WHEN** apenas `./sac.toml` existe (sem `.sac/sac.toml`) e não há `--config` nem `SAC_CONFIG`
+- **THEN** o sistema NÃO carrega o legado
+- **AND** imprime erro orientando a migração (`mkdir -p .sac && mv sac.toml .sac/`) ou `sac init`
+- **AND** retorna exit 1
+
+#### Scenario: --config explícito tem precedência
+- **WHEN** `sac --config /caminho/x.toml <comando>` é executado com `SAC_CONFIG` definido
+- **THEN** a configuração é carregada de `/caminho/x.toml`
+
+#### Scenario: Nenhum config encontrado
+- **WHEN** nenhum dos caminhos da cadeia existe
+- **THEN** o sistema imprime erro indicando os caminhos tentados e sugere `sac init`
+- **AND** retorna exit 1
+
+### Requirement: Sugestão de modelos por harness no init
+Na pergunta "Modelo" do `sac init`, o sistema SHALL tentar listar os modelos
+válidos do harness escolhido: para `kimi`, os aliases das tabelas
+`[models."<alias>"]` de `~/.kimi-code/config.toml` (via tomllib — apenas nomes
+de tabelas); para `opencode`, a saída de `opencode models` (com timeout
+curto). Se a listagem falhar ou o harness for desconhecido, a pergunta cai no
+modo texto livre. Com lista disponível, a resposta é o número do modelo ou
+Enter (vazio = não passar `--model`).
+
+#### Scenario: kimi lista aliases do config do usuário
+- **GIVEN** o harness escolhido é `kimi` e `~/.kimi-code/config.toml` contém
+  tabelas `[models."kimi-code/k3"]` e `[models."esteira/k3"]`
+- **WHEN** a pergunta de modelo é exibida
+- **THEN** a lista numerada contém `kimi-code/k3` e `esteira/k3`
+
+#### Scenario: opencode lista modelos ao vivo
+- **GIVEN** o harness escolhido é `opencode` e `opencode models` retorna
+  linhas `opencode/big-pickle`, `opencode/claude-opus-5`
+- **WHEN** a pergunta de modelo é exibida
+- **THEN** a lista numerada contém esses modelos
+
+#### Scenario: resposta por número
+- **GIVEN** a lista de modelos exibida
+- **WHEN** o usuário responde um número válido da lista
+- **THEN** o modelo correspondente é usado (args `--model <modelo>`)
+- **AND** número fora da lista repete a pergunta
+
+#### Scenario: Enter não passa --model
+- **GIVEN** a lista de modelos exibida
+- **WHEN** o usuário responde vazio
+- **THEN** o agente é configurado sem `--model` (default do harness)
+
+#### Scenario: fallback para texto livre
+- **GIVEN** harness desconhecido ou falha na listagem (arquivo ausente,
+  timeout, erro de parse)
+- **WHEN** a pergunta de modelo é exibida
+- **THEN** nenhuma lista é mostrada e a resposta é texto livre (comportamento
+  anterior), sem erro para o usuário
 
