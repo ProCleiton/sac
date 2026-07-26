@@ -18,6 +18,18 @@ pipx install -e .          # recommended — isolates SAC in its own venv
 pip install --user -e .    # may need --break-system-packages on Ubuntu 24.04+
 ```
 
+## Releases
+
+SAC uses **semver** (since v1.0.0): minor for feature changes, patch for
+fixes. Every release is published on
+[GitHub Releases](https://github.com/ProCleiton/sac/releases) with sdist +
+wheel attached and auto-generated notes.
+
+Release process (maintainers): commit `chore(release): vX.Y.Z` bumping
+`pyproject.toml` → `git tag vX.Y.Z` → `git push origin vX.Y.Z` → the
+[release workflow](.github/workflows/release.yml) runs the full test suite,
+builds the artifacts and publishes the Release. No green suite, no release.
+
 ## Quickstart
 
 ```bash
