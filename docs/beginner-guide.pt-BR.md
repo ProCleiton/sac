@@ -18,7 +18,7 @@ Ele é "stupid" de propósito:
 - **Não** orquestra lógica de negócio nem enforce workflows.
 - Só garante a **entrega das cartas** (caixa de correio em filesystem + daemon).
 
-A inteligência do workflow vive nos **prompts de contrato** (`prompts/*.md`) —
+A inteligência do workflow vive nos **prompts de contrato** (`.sac/prompts/*.md`) —
 é lá que se define, por exemplo, que o lead deve mandar o trabalho do dev para
 o auditor antes de aprovar.
 
@@ -29,7 +29,7 @@ Pense numa repartição pública com caixas de correio:
 | Peça do SAC | Na metáfora |
 |---|---|
 | `.sac/sac.toml` | O organograma (quem senta em qual mesa) |
-| `prompts/*.md` | O manual de conduta de cada funcionário |
+| `.sac/prompts/*.md` | O manual de conduta de cada funcionário |
 | daemon (`sac daemon`) | O motoboy que leva os ofícios de mesa em mesa |
 | `.sac/` | O arquivo morto onde tudo fica registrado |
 
@@ -157,7 +157,7 @@ o líder decompõe o trabalho, delega com `sac send <aux> "<tarefa>"`, cobra
 revisão do trabalho dos auxiliares (revisando ele mesmo ou delegando a um aux
 revisor) e itera delegar → revisar → corrigir até o resultado convergir —
 escalando ao usuário só em bloqueio real. O contrato de líder gerado
-(`prompts/<lider>.md`) já traz essa disciplina; nada mais é necessário.
+(`.sac/prompts/<lider>.md`) já traz essa disciplina; nada mais é necessário.
 
 ---
 
@@ -186,7 +186,7 @@ Todo prompt de contrato tem, no mínimo, três partes:
    camadas, soft delete, prefixos de commit, proibição de `git push` sem
    autorização, etc.).
 
-### 6.2 Exemplo real (resumo de `prompts/development-specialist-1.md`)
+### 6.2 Exemplo real (resumo de `.sac/prompts/development-specialist-1.md`)
 
 ```markdown
 # Papel: development-specialist (SAC)
@@ -252,7 +252,7 @@ O wizard abre anunciando o que será gerado e onde:
 SAC init — este wizard gera:
   .sac/sac.toml   (configuração da esteira)
   .sac/           (estado: inbox/claimed/done)
-  prompts/*.md    (contrato de cada agente — edite à vontade depois)
+  .sac/prompts/*.md (contrato de cada agente — edite à vontade depois)
 ```
 
 ### 7.1 O que o wizard pergunta
@@ -288,7 +288,7 @@ SAC init — este wizard gera:
 | Artefato | Conteúdo |
 |---|---|
 | `.sac/sac.toml` | Config completa, com **validação round-trip** (o TOML gerado é re-parseado com `tomllib` antes de ser gravado; se inválido, o init aborta) |
-| `prompts/<nome>.md` | Um por agente: o contrato canônico do papel escolhido (protocolo de mensageria SAC + disciplina do papel) + notas específicas do harness (`KIMI_NOTE` / `OPENCODE_NOTE`) |
+| `.sac/prompts/<nome>.md` | Um por agente: o contrato canônico do papel escolhido (protocolo de mensageria SAC + disciplina do papel) + notas específicas do harness (`KIMI_NOTE` / `OPENCODE_NOTE`) |
 | `.sac/` | Esqueleto de estado: `inbox/`, `claimed/`, `done/` |
 | diretório do socket | Criado automaticamente se `socket` foi configurado |
 
@@ -296,7 +296,7 @@ SAC init — este wizard gera:
 
 - **Config já existe** (`.sac/sac.toml` ou `sac.toml` legado)? Pergunta
   "Sobrescrever? (s/N)" — default **não**.
-- **`prompts/*.md` já existem?** Mesma pergunta, default **não** ("prompts
+- **`.sac/prompts/*.md` já existem?** Mesma pergunta, default **não** ("prompts
   mantidos").
 - `Ctrl+C`/`EOF` no meio do questionário → "init cancelado pelo usuário", sem
   efeitos colaterais.
@@ -320,12 +320,12 @@ externo**:
 
 As disciplinas são inspiradas no plugin de skills **superpowers** e no workflow
 **OpenSpec** — a stack canônica do SAC — mas funcionam sem nada disso
-instalado. Editar um contrato depois = abrir o `prompts/<nome>.md` no editor;
+instalado. Editar um contrato depois = abrir o `.sac/prompts/<nome>.md` no editor;
 o wizard nunca reedita contratos.
 
 Ou seja: o `init` entrega um **esqueleto funcional com disciplinas reais**; as
 regras de negócio específicas do projeto você adiciona editando os
-`prompts/*.md`.
+`.sac/prompts/*.md`.
 
 ### 7.5 Começar do zero: `sac uninstall`
 
@@ -429,7 +429,7 @@ setadas — comandos `sac` funcionam de qualquer diretório dentro da sessão.
 - Design doc: `sac/docs/2026-07-24-sac-design.md`
 - Plano de implementação: `sac/docs/2026-07-24-sac-implementation-plan.md`
 - Código do wizard: `sac/sac/init.py`
-- Contratos reais deste workspace: `prompts/*.md`
+- Contratos reais deste workspace: `.sac/prompts/*.md`
 - Inspiração: projeto **CCB (Claude Code Bridge)** — o SAC reimplementa a ideia
   na forma mais simples possível, trocando o daemon com detecção de estado de
   tela pela mailbox em filesystem + contrato explícito de sentinela (`SAC_DONE`).

@@ -65,7 +65,7 @@ class InitTest(unittest.TestCase):
         self.assertEqual(cfg.agents[0].role, "leader")
         self.assertEqual(cfg.agents[1].name, "dev-1")
         self.assertEqual(cfg.agents[1].role, "aux")
-        prompt_file = self.d / "prompts" / "leader.md"
+        prompt_file = self.d / ".sac" / "prompts" / "leader.md"
         self.assertTrue(prompt_file.exists(), "prompt do leader deve ser criado")
 
     def test_wizard_sem_pergunta_de_loops_e_toml_sem_secao(self):
@@ -205,8 +205,8 @@ class InitTest(unittest.TestCase):
 
     def test_init_prompts_ask_before_overwrite(self):
         d = Path(tempfile.mkdtemp())
-        (d / "prompts").mkdir()
-        (d / "prompts" / "leader.md").write_text("old content", encoding="utf-8")
+        (d / ".sac" / "prompts").mkdir(parents=True)
+        (d / ".sac" / "prompts" / "leader.md").write_text("old content", encoding="utf-8")
         inputs = [
             "p-sess", "", "5", "1",
             "leader", "kimi", "", "",
@@ -215,7 +215,7 @@ class InitTest(unittest.TestCase):
         ]
         rc = _run_init(d, inputs)
         self.assertEqual(rc, 0)
-        content = (d / "prompts" / "leader.md").read_text(encoding="utf-8")
+        content = (d / ".sac" / "prompts" / "leader.md").read_text(encoding="utf-8")
         self.assertEqual(content, "old content", "prompt não deve ser sobrescrito")
 
 
@@ -232,7 +232,7 @@ class InitWizardUxTest(unittest.TestCase):
         texto = "\n".join(saida)
         self.assertIn(".sac/sac.toml", texto)
         self.assertIn(".sac/", texto)
-        self.assertIn("prompts/*.md", texto)
+        self.assertIn(".sac/prompts/*.md", texto)
         self.assertIn("inbox/claimed/done", texto)
 
     def test_hints_com_exemplos_concretos(self):
@@ -337,7 +337,7 @@ class InitContractsTest(unittest.TestCase):
         self.assertEqual(rc, 0)
         texto = "\n".join(saida)
         self.assertNotIn("Contrato (papel)", texto, "agente 1 não recebe pergunta de catálogo")
-        content = (self.d / "prompts" / "lead.md").read_text(encoding="utf-8")
+        content = (self.d / ".sac" / "prompts" / "lead.md").read_text(encoding="utf-8")
         self.assertIn("# Papel: líder/orquestrador", content)
         self.assertIn("## Contrato SAC (obrigatório)", content)
         self.assertIn("## Disciplina: líder/orquestrador", content)
@@ -354,7 +354,7 @@ class InitContractsTest(unittest.TestCase):
         self.assertNotIn("líder/orquestrador —", texto,
                          "v25b: catálogo dos agentes 2+ exclui líder (só há um)")
         self.assertIn("6. auxiliar genérico", texto)
-        content = (self.d / "prompts" / "dev-1.md").read_text(encoding="utf-8")
+        content = (self.d / ".sac" / "prompts" / "dev-1.md").read_text(encoding="utf-8")
         self.assertIn("## Disciplina: desenvolvedor", content, "Enter seleciona o default")
         self.assertIn("TDD", content)
 
@@ -367,7 +367,7 @@ class InitContractsTest(unittest.TestCase):
         self.assertEqual(rc, 0)
         texto = "\n".join(saida)
         self.assertIn("entrada inválida", texto)
-        content = (self.d / "prompts" / "dev-1.md").read_text(encoding="utf-8")
+        content = (self.d / ".sac" / "prompts" / "dev-1.md").read_text(encoding="utf-8")
         self.assertIn("revisor de código", content)
 
     def test_contrato_contem_mensageria_e_disciplina(self):
@@ -376,7 +376,7 @@ class InitContractsTest(unittest.TestCase):
                                 "rev", "opencode", "2", "", "",
                                 "n"])
         self.assertEqual(rc, 0)
-        content = (self.d / "prompts" / "rev.md").read_text(encoding="utf-8")
+        content = (self.d / ".sac" / "prompts" / "rev.md").read_text(encoding="utf-8")
         for trecho in ("sac done", "SAC_DONE", "sac send", "bloqueantes", "warnings"):
             self.assertIn(trecho, content, f"contrato do revisor sem {trecho!r}")
         for ref in ("pip install", "npm i"):
@@ -606,7 +606,7 @@ class InitOnboardingTest(unittest.TestCase):
         texto = "\n".join(saida)
         self.assertIn("Próximos passos", texto)
         self.assertIn("Pre-warm", texto)
-        self.assertIn("prompts/*.md", texto)
+        self.assertIn(".sac/prompts/*.md", texto)
         self.assertIn(".sac/sac.toml", texto)
         self.assertIn("[windows]", texto)
         self.assertIn("sac up", texto)
@@ -667,7 +667,7 @@ class InitWorkspaceTest(unittest.TestCase):
         cfg = load_config(sac_dir / "sac.toml")
         self.assertEqual(cfg.session_name, "sac-test")
 
-        self.assertTrue((d / "prompts" / "leader.md").is_file())
+        self.assertTrue((d / ".sac" / "prompts" / "leader.md").is_file())
 
     def test_init_without_socket_skips_mkdir(self):
         d = Path(tempfile.mkdtemp())
@@ -705,20 +705,20 @@ boot_wait = 10
 name = "leader"
 command = "kimi"
 role = "leader"
-prompt_file = "prompts/leader.md"
+prompt_file = ".sac/prompts/leader.md"
 boot_wait = 10.0
 
 [[agents]]
 name = "dev-1"
 command = "opencode"
 role = "aux"
-prompt_file = "prompts/dev.md"
+prompt_file = ".sac/prompts/dev.md"
 boot_wait = 10.0
 """
         (d / "sac.toml").write_text(config_toml, encoding="utf-8")
-        (d / "prompts").mkdir(parents=True, exist_ok=True)
-        (d / "prompts" / "leader.md").write_text("leader prompt")
-        (d / "prompts" / "dev.md").write_text("dev prompt")
+        (d / ".sac" / "prompts").mkdir(parents=True, exist_ok=True)
+        (d / ".sac" / "prompts" / "leader.md").write_text("leader prompt")
+        (d / ".sac" / "prompts" / "dev.md").write_text("dev prompt")
         cfg = load_config(d / "sac.toml")
         store = __import__("sac.store", fromlist=["Store"]).Store(d / ".sac")
         r = FakeRunner(outputs={("rc", "has-session"): 1, "list-windows": "leader\ndev-1\ndash\n"})

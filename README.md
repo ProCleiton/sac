@@ -126,7 +126,7 @@ prompts, the `sac init` wizard, and every-day commands.
   tmux failures abort immediately with a clear error message instead of
   silently pretending success.
 - **`sac init` wizard**: interactive questionnaire that generates a complete
-  `.sac/sac.toml`, `prompts/*.md` with a canonical role contract per agent,
+  `.sac/sac.toml`, `.sac/prompts/*.md` with a canonical role contract per agent,
   `.sac/` skeleton, and socket directory. Every question has a hint with a
   concrete example. Agent 1 is announced as the leader/orchestrator (no role
   question); agents 2+ are `aux` and pick a contract from a numbered catalog
@@ -200,7 +200,7 @@ how to do keeps working, untouched.
   |---------|-------|-------|
   | Plugins, skills, login, model, harness flags | you | the harness's own config files |
   | Agents, roles, layout, socket | SAC | `.sac/sac.toml` |
-  | Agent behavior (contracts, workflow) | you | `prompts/*.md` |
+  | Agent behavior (contracts, workflow) | you | `.sac/prompts/*.md` |
 
 - **Pre-warm before the first `sac up`**: run the harness once in the workspace
   directory (e.g. `kimi .`) to approve logins, plugins and interactive consents.

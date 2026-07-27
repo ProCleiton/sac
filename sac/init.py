@@ -78,7 +78,7 @@ def _ask_contract(stdin, stdout) -> dict:
     default_idx = next(i for i, c in enumerate(AUX_CONTRACTS, 1) if c["key"] == DEFAULT_AUX_CONTRACT)
     escolha = _ask("Contrato", str(default_idx), stdin, stdout,
                    validate=lambda v: v.isdigit() and 1 <= int(v) <= len(AUX_CONTRACTS),
-                   hint="Enter = desenvolvedor; o contrato completo vai para prompts/<nome>.md")
+                   hint="Enter = desenvolvedor; o contrato completo vai para .sac/prompts/<nome>.md")
     return AUX_CONTRACTS[int(escolha) - 1]
 
 
@@ -219,7 +219,7 @@ def _collect_config(stdin, stdout) -> Config:
                     abw = _ask("Boot wait específico (número)", "", stdin, stdout)
                     if not abw:
                         break
-        prompt_name = f"prompts/{name}.md"
+        prompt_name = f".sac/prompts/{name}.md"
         agents.append(AgentConfig(
             name=name, command=command, args=args,
             role="leader" if i == 0 else "aux", prompt_file=prompt_name,
@@ -266,7 +266,7 @@ def _generate_toml(cfg: Config) -> str:
         if a.args:
             lines.append(f'args = {a.args}')
         lines.append(f'role = "{a.role}"')
-        lines.append(f'prompt_file = "prompts/{a.name}.md"')
+        lines.append(f'prompt_file = ".sac/prompts/{a.name}.md"')
         if a.boot_wait is not None:
             lines.append(f"boot_wait = {a.boot_wait}")
         lines.append("")
@@ -302,7 +302,7 @@ def _render_contract(contract: dict, harness: str, harness_note: str) -> str:
 def _generate_prompts(cfg: Config, root: Path, stdin=None, stdout=None) -> bool:
     stdin = stdin or input
     stdout = stdout or print
-    prompts_dir = root / "prompts"
+    prompts_dir = root / ".sac" / "prompts"
     if prompts_dir.is_dir():
         existing = list(prompts_dir.glob("*.md"))
         if existing:
@@ -323,7 +323,7 @@ def _print_onboarding(stdout) -> None:
     stdout("1. Pre-warm: rode o harness 1x no diretório para aprovar plugins/login")
     stdout("   → kimi . (ou o comando do seu harness)")
     stdout("2. Revise os contratos gerados (edite à vontade):")
-    stdout("   → prompts/*.md")
+    stdout("   → .sac/prompts/*.md")
     stdout("3. Ajuste a configuração da esteira se precisar:")
     stdout("   → .sac/sac.toml (layout [windows], boot_wait etc.)")
     stdout("4. Suba a esteira:")
@@ -350,7 +350,7 @@ def cmd_init(stdin=None, stdout=None, root: Path | None = None, is_interactive: 
         stdout("SAC init — este wizard gera:")
         stdout("  .sac/sac.toml   (configuração da esteira)")
         stdout("  .sac/           (estado: inbox/claimed/done)")
-        stdout("  prompts/*.md    (contrato de cada agente — edite à vontade depois)")
+        stdout("  .sac/prompts/*.md (contrato de cada agente — edite à vontade depois)")
         stdout("")
 
         sac_dir = root / ".sac"
@@ -375,7 +375,7 @@ def cmd_init(stdin=None, stdout=None, root: Path | None = None, is_interactive: 
         stdout(f"config criado em {config_path}")
 
         _generate_prompts(cfg, root, stdin=stdin, stdout=stdout)
-        stdout(f"prompts criados em {root / 'prompts'}/")
+        stdout(f"prompts criados em {root / '.sac' / 'prompts'}/")
 
         for sub in ("inbox", "claimed", "done"):
             (sac_dir / sub).mkdir(parents=True, exist_ok=True)
