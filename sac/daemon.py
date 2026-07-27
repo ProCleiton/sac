@@ -10,10 +10,12 @@ from __future__ import annotations
 
 import os
 import signal
+import threading
 import time
 from pathlib import Path
 
 from .config import Config, ConfigError
+from .fanout import TIMEOUT_DEFAULT, FanOutCollector
 from .reply_validator import ReplyValidator
 from .store import Message, Store
 from .tmux import Tmux
@@ -33,6 +35,8 @@ class Daemon:
         self._poke_count: dict[str, dict[str, int]] = {}
         self._escalated: set[str] = set()
         self._approval_rendered: set[str] = set()
+        self.fanout = FanOutCollector(store)
+        self._fanout_timers: dict[str, threading.Timer] = {}
 
     def _poke_interval(self, msg_id: str) -> float:
         for agent_name, msgs in self._poke_state.items():
@@ -58,6 +62,7 @@ class Daemon:
         signal.signal(signal.SIGTERM, lambda s, f: setattr(self, '_running', False))
         signal.signal(signal.SIGINT, lambda s, f: setattr(self, '_running', False))
         try:
+            self._retomar_fanouts()
             self._loop()
         finally:
             self._remove_pid()
@@ -73,7 +78,58 @@ class Daemon:
                 self._process_user_approvals()
             except Exception as exc:
                 self.store.log("loop_error", agent="user", error=str(exc))
+            try:
+                self._process_user_fanout()
+            except Exception as exc:
+                self.store.log("loop_error", agent="user", error=str(exc))
+            try:
+                self._scan_fanouts()
+            except Exception as exc:
+                self.store.log("loop_error", agent="daemon", error=str(exc))
             time.sleep(POLL_INTERVAL)
+
+    def _retomar_fanouts(self):
+        """Retoma fan-outs com coleta aberta (crash do daemon): novo timeout."""
+        self._scan_fanouts()
+
+    def _scan_fanouts(self):
+        """Agenda o timeout de todo fan-out pendente ainda sem timer."""
+        for fid in self.fanout.pendentes():
+            if fid in self._fanout_timers:
+                continue
+            state = self.fanout.estado(fid)
+            timeout = state.get("timeout", TIMEOUT_DEFAULT) if state else TIMEOUT_DEFAULT
+            timer = threading.Timer(timeout, self._expirar_fanout, args=[fid])
+            timer.daemon = True
+            self._fanout_timers[fid] = timer
+            timer.start()
+
+    def _expirar_fanout(self, fid: str):
+        self._fanout_timers.pop(fid, None)
+        self.fanout.expirar(fid)
+
+    def _cancelar_timer_fanout(self, fid: str):
+        timer = self._fanout_timers.pop(fid, None)
+        if timer:
+            timer.cancel()
+
+    def _coletar_reply_fanout(self, name: str, msg: Message):
+        """Reply de fan-out: auto-ack + coleta, sem poke individual ao solicitante."""
+        self.store.finish_reply(name, msg.id)
+        status = self.fanout.coletar(msg)
+        if status == "completo":
+            self._cancelar_timer_fanout(msg.reply_to_fanout)
+
+    def _process_user_fanout(self):
+        """Coleta replies de fan-out do user (destino virtual, sem pane), em FIFO."""
+        while True:
+            pend = self.store.pending("user")
+            if not pend:
+                return
+            msg = self.store.find("user", pend[0])
+            if msg is None or not msg.reply_to_fanout:
+                return  # primeira pendência não é fan-out (ex.: approval) — não consumir
+            self._coletar_reply_fanout("user", self.store.next("user"))
 
     def _process_user_approvals(self):
         """Renderiza approval_requests do user no pane do líder (user não tem pane).
@@ -136,9 +192,15 @@ class Daemon:
             self._deliver_next(name)
 
     def _deliver_next(self, name: str):
+        pend = self.store.pending(name)
+        if pend:
+            first = self.store.find(name, pend[0])
+            if first is not None and first.reply_to_fanout:
+                self._coletar_reply_fanout(name, self.store.next(name))
+                return
         pid = self.tmux.find_pane_id(name)
         if not pid:
-            if self.store.pending(name):
+            if pend:
                 self.store.log("deliver_skip", agent=name, reason="pane_not_found")
             return
         msg = self.store.next(name)

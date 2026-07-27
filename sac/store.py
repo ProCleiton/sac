@@ -31,6 +31,8 @@ class Message:
     state: str | None = None
     reply_schema: dict | None = None
     run: str | None = None
+    fanout_id: str | None = None
+    reply_to_fanout: str | None = None
 
 
 class Store:
@@ -71,12 +73,14 @@ class Store:
         return Message(meta["id"], meta["from"], meta["to"], meta["ts"], body,
                        reply_to=meta.get("reply_to"),
                        type=meta.get("type"), state=meta.get("state"),
-                       reply_schema=reply_schema, run=meta.get("run"))
+                       reply_schema=reply_schema, run=meta.get("run"),
+                       fanout_id=meta.get("fanout_id"),
+                       reply_to_fanout=meta.get("reply_to_fanout"))
 
     def send(self, sender: str, recipient: str, body: str, now: datetime | None = None,
              msg_type: str | None = None, state: str | None = None,
              reply_to: str | None = None, reply_schema: dict | None = None,
-             run: str | None = None) -> str:
+             run: str | None = None, fanout_id: str | None = None) -> str:
         now = now or datetime.now()
         stamp = now.strftime("%Y%m%d-%H%M%S")
         existing = []
@@ -91,8 +95,13 @@ class Store:
         schema_line = (f"reply_schema: {json.dumps(reply_schema, ensure_ascii=False, sort_keys=True)}\n"
                        if reply_schema else "")
         run_line = f"run: {run}\n" if run else ""
+        reply_to_fanout = self._propagate_fanout(sender, reply_to)
+        rtf_line = f"reply_to_fanout: {reply_to_fanout}\n" if reply_to_fanout else ""
+        fanout_line = (f"fanout_id: {fanout_id}\nfanout_group: {fanout_id}\n"
+                       if fanout_id else "")
         content = (f"id: {mid}\nfrom: {sender}\nto: {recipient}\nts: {now.isoformat()}\n"
-                   f"{reply_line}{type_line}{state_line}{schema_line}{run_line}\n{body}")
+                   f"{reply_line}{type_line}{state_line}{schema_line}{run_line}"
+                   f"{rtf_line}{fanout_line}\n{body}")
         (self._dir("inbox", recipient) / f"{mid}.msg").write_text(content, encoding="utf-8")
         extra = {"type": msg_type} if msg_type else {}
         self.log("send", now=now, sender=sender, to=recipient, id=mid, **extra)
@@ -111,6 +120,15 @@ class Store:
             if msg.sender == recipient:
                 return msg.id
         return None
+
+    def _propagate_fanout(self, sender: str, reply_to: str | None) -> str | None:
+        """Reply de uma tarefa de fan-out herda o grupo como `reply_to_fanout`."""
+        if not reply_to:
+            return None
+        original = self._locate(sender, reply_to)
+        if original is None:
+            return None
+        return self._parse(original).fanout_id
 
     def _locate(self, agent: str, msg_id: str) -> Path | None:
         for kind in ("inbox", "claimed", "done"):

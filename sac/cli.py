@@ -8,9 +8,9 @@ import sys
 from pathlib import Path
 
 from .commands import (
-    cmd_approve, cmd_done, cmd_doctor, cmd_down, cmd_inject, cmd_kill, cmd_log,
-    cmd_next, cmd_notify, cmd_recv, cmd_respond, cmd_resume, cmd_runs, cmd_send,
-    cmd_sidebar, cmd_sidebar_toggle, cmd_status, cmd_uninstall, cmd_up,
+    cmd_approve, cmd_done, cmd_doctor, cmd_down, cmd_fanout, cmd_inject, cmd_kill,
+    cmd_log, cmd_next, cmd_notify, cmd_recv, cmd_respond, cmd_resume, cmd_runs,
+    cmd_send, cmd_sidebar, cmd_sidebar_toggle, cmd_status, cmd_uninstall, cmd_up,
 )
 from .config import ConfigError, load_config
 from .init import cmd_init
@@ -93,6 +93,15 @@ def _build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--lines", type=int, default=200)
 
     sub.add_parser("runs", help="lista as runs com status agregado (sent/done/pending)")
+
+    sp = sub.add_parser("fanout", help="dispara o mesmo template para N agentes em "
+                                       "paralelo; o daemon agrega as replies e entrega "
+                                       "ao solicitante (sem daemon, coleta manual via "
+                                       "`sac recv <agente>`)")
+    sp.add_argument("template")
+    sp.add_argument("targets", nargs="*")
+    sp.add_argument("--timeout", type=int, default=600, metavar="SEG",
+                    help="tempo máximo de espera pelas replies (default: 600s)")
 
     sp = sub.add_parser("resume", help="reconcilia uma run interrompida: re-entrega "
                                        "mensagens não concluídas (nunca re-executa done)")
@@ -259,6 +268,10 @@ def main(argv: list[str] | None = None) -> int:
                 return cmd_recv(cfg, tmux, args.agent, args.lines)
             case "runs":
                 return cmd_runs(store)
+            case "fanout":
+                return cmd_fanout(cfg, store, tmux, args.template, args.targets,
+                                  timeout=args.timeout,
+                                  sender=os.environ.get("SAC_AGENT", "user"))
             case "resume":
                 return cmd_resume(cfg, store, tmux, args.run_id)
             case "notify":

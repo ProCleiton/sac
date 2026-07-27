@@ -12,7 +12,7 @@ O sistema SHALL suportar mensagens com cabeçalho `fanout_id` para agrupar repli
 ## MODIFIED Requirements
 
 ### Requirement: Daemon de entrega direta
-Um daemon opcional SHALL monitorar inbox/claimed de todos os agentes e entregar mensagens diretamente no pane do harness, com suporte a fura-fila (replies entregues mesmo durante tarefa claimed) e backoff exponencial de re-cutucadas. O daemon SHALL também gerenciar a coleta de replies de fan-outs.
+Um daemon opcional SHALL monitorar inbox/claimed de todos os agentes e entregar mensagens diretamente no pane do harness, com suporte a fura-fila (replies entregues mesmo durante tarefa claimed) e backoff exponencial de re-cutucadas. O daemon SHALL também renderizar approval_requests destinadas ao `user` no pane do líder e gerenciar a coleta de replies de fan-outs.
 
 #### Scenario: Daemon entrega mensagem nova
 - **GIVEN** daemon ativo (PID file em `.sac/daemon.pid`)
@@ -42,6 +42,12 @@ Um daemon opcional SHALL monitorar inbox/claimed de todos os agentes e entregar 
 - **WHEN** o daemon inicia (`Daemon.run()`)
 - **THEN** escreve `daemon.pid` em `.sac/` com o PID do processo
 - **AND** ao receber SIGTERM/SIGINT, remove o arquivo
+
+#### Scenario: Daemon renderiza approval_request no pane do líder
+- **GIVEN** uma approval_request pendente em `inbox/user/`
+- **WHEN** o daemon varre a inbox do user
+- **THEN** renderiza o pedido no pane do líder (user não tem pane próprio), incluindo o id e a instrução de resposta
+- **AND** registra o evento `approval_prompt` em `log.jsonl`
 
 #### Scenario: Daemon gerencia fan-out
 - **GIVEN** fan-out disparado com N targets
