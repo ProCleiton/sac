@@ -69,7 +69,7 @@ referências só com importance ≤ 1. `export` gera Markdown agrupado por kind.
 
 ### Requirement: Injeção orçada no contrato do leader
 O sistema SHALL injetar o bloco de memória no contrato do líder
-(`prompts/<leader>.md`) entre os marcadores `<!-- SAC-MEMORY:BEGIN -->` e
+(`.sac/.sac/prompts/<leader>.md`) entre os marcadores `<!-- SAC-MEMORY:BEGIN -->` e
 `<!-- SAC-MEMORY:END -->`, reescrevendo APENAS o conteúdo entre eles, de forma
 idempotente, no `sac up` e após cada operação de escrita do `sac memory`. O
 bloco contém instrução fixa de curadoria e as memórias ativas dentro de um
@@ -84,7 +84,7 @@ corrompidos geram aviso e o arquivo não é modificado.
 - **AND** a seção entre marcadores reflete o estado atual do banco
 
 #### Scenario: contrato sem marcadores não é tocado
-- **GIVEN** `prompts/<leader>.md` sem os marcadores
+- **GIVEN** `.sac/.sac/prompts/<leader>.md` sem os marcadores
 - **WHEN** a injeção rodaria
 - **THEN** o arquivo permanece inalterado
 
