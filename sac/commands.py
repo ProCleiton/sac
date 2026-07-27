@@ -13,6 +13,7 @@ from datetime import datetime
 from pathlib import Path
 
 from .config import Config, ConfigError
+from .fanout import TIMEOUT_DEFAULT, FanOutManager
 from .harness_adapters import harness_args, harness_env
 from .plugins_manifest import bin_dir, sac_home
 from .reply_validator import ReplyValidator
@@ -86,6 +87,39 @@ def cmd_send(cfg: Config, store: Store, tmux: Tmux, to: str, body: str,
         else:
             print(f"aviso: pane do agente '{to}' não encontrado; mensagem persistida na inbox", file=sys.stderr)
     return mid
+
+
+def cmd_fanout(cfg: Config, store: Store, tmux: Tmux, template: str,
+               targets: list[str], timeout: int = TIMEOUT_DEFAULT,
+               sender: str = "user") -> int:
+    """Dispara o mesmo template para N agentes; o daemon agrega as replies.
+
+    A coleta é assíncrona (daemon): sem daemon, as mensagens são criadas mas
+    o solicitante coleta manualmente com `sac recv <agente>`.
+    """
+    if not template.strip():
+        print("erro: template não pode ser vazio", file=sys.stderr)
+        return 2
+    if not targets:
+        print("erro: pelo menos um target é necessário", file=sys.stderr)
+        return 2
+    for target in targets:
+        try:
+            cfg.agent(target)
+        except ConfigError as e:
+            print(f"erro: {e}", file=sys.stderr)
+            return 1
+    fid = FanOutManager(store).disparar(sender, template, targets, timeout=timeout)
+    if not _daemon_active(store):
+        if tmux.has_session():
+            for target in targets:
+                pid = tmux.find_pane_id(target)
+                if pid:
+                    tmux.poke_with_enter(pid, POKE_TEXT)
+        print("aviso: daemon inativo — as replies não serão agregadas "
+              "automaticamente; colete com `sac recv <agente>`", file=sys.stderr)
+    print(f"fan-out {fid} disparado para {len(targets)} agente(s)")
+    return 0
 
 
 def _responder_aprovacao(store: Store, msg_id: str, state: str,
