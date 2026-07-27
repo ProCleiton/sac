@@ -1154,6 +1154,8 @@ def cmd_recv(cfg: Config, tmux: Tmux, agent: str, lines: int = 200) -> int:
 def notify_sweep(cfg: Config, store: Store, tmux: Tmux, poke_state: dict | None = None) -> dict[str, int]:
     pokes = {}
     for a in cfg.agents:
+        if a.role == "leader":
+            continue  # líder é o topo da hierarquia — humano já está no pane dele
         stale = store.stale(a.name, cfg.poke_stale_after)
         if not stale:
             continue

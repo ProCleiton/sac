@@ -170,6 +170,39 @@ class DaemonFlagTest(unittest.TestCase):
         stale_calls = [c for c in runner.calls if "pendente" in str(c)]
         self.assertEqual(len(stale_calls), 1, "segunda chamada não deve cutucar (throttle)")
 
+    def test_process_agent_lider_sem_poke_stale(self):
+        from sac.daemon import Daemon
+        runner = FakeRunner()
+        tmux = Tmux("sac-test", runner=runner)
+        runner.outputs["list-panes"] = "%1|env SAC_AGENT=leader kimi\n"
+        d = Daemon(self.cfg, self.store, tmux)
+        old = datetime.now() - timedelta(seconds=300)
+        self.store.send("user", "leader", "old task", now=old)
+        self.store.next("leader")
+        d._process_agent("leader")
+        stale_calls = [c for c in runner.calls if "pendente" in str(c)]
+        self.assertEqual(stale_calls, [], "líder NÃO deve ser re-cutucado")
+        log = (self.store.root / "log.jsonl").read_text(encoding="utf-8")
+        self.assertNotIn('"poke"', log, "nenhum evento poke para o líder")
+
+    def test_process_agent_lider_claimed_ainda_entrega_reply(self):
+        from sac.daemon import Daemon
+        runner = FakeRunner()
+        tmux = Tmux("sac-test", runner=runner)
+        runner.outputs["list-panes"] = "%1|env SAC_AGENT=leader kimi\n%2|env SAC_AGENT=dev-1 opencode\n"
+        d = Daemon(self.cfg, self.store, tmux)
+        old = datetime.now() - timedelta(seconds=300)
+        self.store.send("user", "leader", "old task", now=old)
+        self.store.next("leader")
+        self.store.send("leader", "dev-1", "faça X", now=datetime.now())
+        self.store.next("dev-1")
+        self.store.send("dev-1", "leader", "pronto", now=datetime.now())
+        d._process_agent("leader")
+        log = (self.store.root / "log.jsonl").read_text(encoding="utf-8")
+        self.assertIn("deliver_reply", log, "reply do worker deve furar a fila do líder")
+        stale_calls = [c for c in runner.calls if "pendente" in str(c)]
+        self.assertEqual(stale_calls, [], "sem poke de stale no líder")
+
     def test_run_writes_and_removes_pid(self):
         from sac.daemon import Daemon
         d = Daemon(self.cfg, self.store, Tmux("sac-test"))
@@ -383,6 +416,20 @@ class EscalationTest(unittest.TestCase):
         self.assertIn("reporte AGORA", body, "poke deve instruir reporte imediato")
         self.assertIn("sac send leader", body, "poke deve citar o nome real do líder")
 
+    def test_poke_text_instrui_reenvio(self):
+        d, runner = self._make_daemon()
+        self._stale_claim()
+        d._process_agent("dev-1")
+        poke_calls = [c for c in runner.calls if "pendente" in str(c)]
+        self.assertEqual(len(poke_calls), 1, "deve cutucar tarefa stale")
+        body = str(poke_calls[0])
+        self.assertIn("REENVIE", body, "poke deve instruir reenvio do resultado")
+        self.assertIn("mesmo que já tenha enviado", body,
+                      "reenvio vale mesmo se já enviou (entrega pode ter falhado)")
+        self.assertIn("sac send leader", body, "reenvio usa o nome real do líder")
+        self.assertLess(body.index("REENVIE"), body.index("sac done"),
+                        "instrução de reenvio deve preceder a de `sac done`")
+
     def test_daemon_escalate_apos_n_pokes(self):
         d, runner = self._make_daemon()
         mid = self._stale_claim()
@@ -398,6 +445,20 @@ class EscalationTest(unittest.TestCase):
         content = msg_file.read_text(encoding="utf-8")
         self.assertIn("sem progresso", content)
         self.assertIn(mid, content)
+
+    def test_lider_nunca_autoescalado(self):
+        d, runner = self._make_daemon()
+        old = datetime.now() - timedelta(seconds=300)
+        self.store.send("user", "leader", "old task", now=old)
+        self.store.next("leader")
+        for _ in range(5):
+            d._poke_state.clear()  # zera o throttle para forçar o próximo poke
+            d._process_agent("leader")
+        log = self._log_text()
+        self.assertNotIn('"escalate"', log, "líder nunca deve ser escalado")
+        inbox = self.store.root / "inbox" / "leader"
+        daemon_msgs = list(inbox.glob("*-from-daemon")) if inbox.is_dir() else []
+        self.assertEqual(daemon_msgs, [], "nenhuma auto-escalação na inbox do líder")
 
     def test_daemon_escalate_uma_vez(self):
         d, runner = self._make_daemon()

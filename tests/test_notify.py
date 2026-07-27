@@ -50,6 +50,15 @@ class NotifyTest(unittest.TestCase):
         self.assertEqual(len(poke_calls), 1)
         self.assertIn("1 mensagem", poke_calls[0][-1])
 
+    def test_sweep_pula_lider(self):
+        old = NOW - timedelta(seconds=300)
+        self.store.send("dev-1", "leader", "velha", now=old)
+        self.store.next("leader")
+        result = notify_sweep(self.cfg, self.store, self.tmux)
+        self.assertEqual(result, {}, "líder não deve ser re-cutucado")
+        poke_calls = [c for c in self.runner.calls if "aguardando" in c[-1]]
+        self.assertEqual(poke_calls, [], "nenhum poke no pane do líder")
+
     def test_sweep_no_stale_no_poke(self):
         self.store.send("leader", "dev-1", "nova", now=NOW)
         result = notify_sweep(self.cfg, self.store, self.tmux)
