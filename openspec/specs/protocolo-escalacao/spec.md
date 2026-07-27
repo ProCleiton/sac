@@ -34,7 +34,10 @@ líder se reporte ao humano.
 ### Requirement: Poke com instrução de reporte imediato
 O sistema SHALL incluir no texto do poke do daemon a instrução de que, se o
 worker estiver travado ou sem saber como prosseguir, ele deve reportar a
-situação imediatamente ao líder.
+situação imediatamente ao líder. O poke SHALL também instruir que, se a
+tarefa já foi concluída, o worker REENVIE o resultado ao líder — mesmo que
+já tenha enviado antes, pois a entrega pode ter falhado — antes de concluir
+com `sac done`: reenvio duplicado é preferível a trabalho travado.
 
 #### Scenario: Poke instrui reporte ao líder
 - **GIVEN** daemon ativo e mensagem claimed stale para um worker
@@ -44,10 +47,22 @@ situação imediatamente ao líder.
   AGORA ao líder" com o comando `sac send <líder> "<situação>"` usando o nome
   real do líder
 
+#### Scenario: Poke instrui reenvio de resultado já enviado
+- **GIVEN** daemon ativo e mensagem claimed stale para um worker
+- **WHEN** o daemon envia o poke
+- **THEN** o texto instrui que, se a tarefa já foi concluída, o worker
+  REENVIE o resultado ao líder com `sac send <líder> "..."` usando o nome
+  real do líder
+- **AND** o texto deixa explícito que o reenvio vale mesmo que o resultado
+  já tenha sido enviado antes (a entrega pode ter falhado)
+- **AND** a instrução de reenvio precede a de `sac done <id>`
+
 ### Requirement: Daemon escala worker sem progresso ao líder
 O sistema SHALL, após `poke_escalate_after` pokes (default 3) em uma mesma
 mensagem claimed sem `done`, escalar automaticamente ao líder para que ele
-decida a recuperação.
+decida a recuperação. A escalação SHALL NOT ocorrer para o próprio líder:
+ele é o topo da hierarquia de agentes e o humano já acompanha o seu pane —
+auto-escalação seria ruído na inbox dele.
 
 #### Scenario: Escalonamento após N pokes
 - **GIVEN** daemon ativo, mensagem claimed stale e `poke_escalate_after = 3`
@@ -56,6 +71,12 @@ decida a recuperação.
 - **AND** envia mensagem automática ao líder com sender `daemon` relatando
   "worker <w> sem progresso na tarefa <id> após 3 pokes — possível
   travamento", sugerindo inspeção com `sac recv <w>`
+
+#### Scenario: Líder nunca é auto-escalado
+- **GIVEN** o líder com mensagem claimed sem `done`
+- **WHEN** o daemon varre os agentes por qualquer número de ciclos
+- **THEN** nenhuma mensagem de escalação é enviada ao líder sobre ele mesmo
+- **AND** nenhum evento `escalate` é registrado com o líder como agente
 
 #### Scenario: Escala uma única vez por mensagem
 - **GIVEN** uma mensagem já escalada
