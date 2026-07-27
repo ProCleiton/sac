@@ -101,7 +101,11 @@ prompts, the `sac init` wizard, and every-day commands.
   every agent's inbox (POLL_INTERVAL=1s). When a new message arrives, it injects
   the **body directly** into the agent's tmux pane via `send-keys` — no
   intermediate "run `sac next`" prompt. The daemon also re-pokes stale claimed
-  tasks and writes `daemon.pid` for inter-process coordination.
+  tasks — never the leader's, since the human interacts directly in the
+  leader's pane and there is no one above the leader to escalate to. A stale
+  poke instructs the worker to re-send an already-completed result to the
+  leader (the delivery may have failed) before running `sac done`. The daemon
+  writes `daemon.pid` for inter-process coordination.
 - **Reply semantics**: responses are automatically recognized (`reply_to` field
   inferred at send time). The daemon delivers replies even while the agent is
   busy with a task (they skip the queue) and auto-acknowledges them — no

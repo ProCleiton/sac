@@ -164,28 +164,34 @@ class Daemon:
         claimed = self.store.claimed(name)
 
         if claimed:
-            stale = self.store.stale(name, self.cfg.poke_stale_after)
-            stale_ids = [m for m in claimed if m in stale]
-            if stale_ids:
-                sid = stale_ids[0]
-                interval = self._poke_interval(sid)
-                last = self._poke_state.get(name, {}).get(sid, 0.0)
-                if not (time.monotonic() - last < interval):
-                    pid = self.tmux.find_pane_id(name)
-                    if pid:
-                        leader = self.cfg.leader.name
-                        self.tmux.send_keys(
-                            pid,
-                            f"SAC: tarefa {sid} pendente — rode `sac done {sid}`; "
-                            f"se estiver travado ou sem saber como prosseguir, reporte AGORA "
-                            f"ao líder: `sac send {leader} \"...\"`, substituindo `...` pela "
-                            f"descrição real do bloqueio (nunca placeholder literal)"
-                        )
-                        self.store.log("poke", agent=name, id=sid)
-                        self._poke_state.setdefault(name, {})[sid] = time.monotonic()
-                        count = self._poke_count.get(name, {}).get(sid, 0) + 1
-                        self._poke_count.setdefault(name, {})[sid] = count
-                        self._maybe_escalate(name, sid, count)
+            if name != self.cfg.leader.name:
+                # líder é o topo da hierarquia (humano já está no pane dele):
+                # sem re-cutucada de stale nem auto-escalação
+                stale = self.store.stale(name, self.cfg.poke_stale_after)
+                stale_ids = [m for m in claimed if m in stale]
+                if stale_ids:
+                    sid = stale_ids[0]
+                    interval = self._poke_interval(sid)
+                    last = self._poke_state.get(name, {}).get(sid, 0.0)
+                    if not (time.monotonic() - last < interval):
+                        pid = self.tmux.find_pane_id(name)
+                        if pid:
+                            leader = self.cfg.leader.name
+                            self.tmux.send_keys(
+                                pid,
+                                f"SAC: tarefa {sid} pendente — se já concluiu, REENVIE o "
+                                f"resultado ao líder AGORA (`sac send {leader} \"...\"`), mesmo "
+                                f"que já tenha enviado antes — a entrega pode ter falhado — e só "
+                                f"então rode `sac done {sid}`; se estiver travado ou sem saber "
+                                f"como prosseguir, reporte AGORA "
+                                f"ao líder: `sac send {leader} \"...\"`, substituindo `...` pela "
+                                f"descrição real do bloqueio (nunca placeholder literal)"
+                            )
+                            self.store.log("poke", agent=name, id=sid)
+                            self._poke_state.setdefault(name, {})[sid] = time.monotonic()
+                            count = self._poke_count.get(name, {}).get(sid, 0) + 1
+                            self._poke_count.setdefault(name, {})[sid] = count
+                            self._maybe_escalate(name, sid, count)
             peek = self.store.peek_next(name)
             if peek and peek[1]:
                 self._deliver_next(name)
