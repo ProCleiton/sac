@@ -157,7 +157,7 @@ def _collect_config(stdin, stdout) -> Config:
                   hint="digite um caminho dedicado (ex.: ~/.sac-nfi/tmux.sock) — isola a esteira "
                        "do seu tmux pessoal; Enter deixa SEM socket (não recomendado). "
                        "O exemplo NÃO é aplicado automaticamente")
-    boot_wait = int(_ask("Boot wait (segundos)", "10", stdin, stdout,
+    boot_wait = int(_ask("Boot wait (segundos)", "8", stdin, stdout,
                          validate=lambda v: v.isdigit(),
                          hint="segundos antes de injetar o prompt; harness lento pede mais — ex.: 10 a 15"))
 
