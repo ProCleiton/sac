@@ -75,6 +75,15 @@ def _build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--run", default=None, metavar="ID",
                     help="associa a mensagem a uma run (agrupador nomeado); "
                          "a run é criada implicitamente no primeiro uso")
+    sp.add_argument("--max-tasks", type=int, default=None, metavar="N",
+                    help="(só com --run, na criação da run) teto de tarefas da run; "
+                         "sobrescreve session.max_tasks_per_run")
+    sp.add_argument("--max-messages", type=int, default=None, metavar="N",
+                    help="(só com --run, na criação da run) teto de mensagens da run; "
+                         "sobrescreve session.max_messages_per_run")
+    sp.add_argument("--max-wall-time", type=int, default=None, metavar="SEG",
+                    help="(só com --run, na criação da run) teto de wall time da run; "
+                         "sobrescreve session.max_wall_time_per_run")
 
     sp = sub.add_parser("approve", help="aprova uma approval_request pendente")
     sp.add_argument("msg_id")
@@ -255,7 +264,9 @@ def main(argv: list[str] | None = None) -> int:
             case "send":
                 cmd_send(cfg, store, tmux, args.to, args.body,
                          sender=os.environ.get("SAC_AGENT", "user"),
-                         approval=args.approval, schema=args.schema, run=args.run)
+                         approval=args.approval, schema=args.schema, run=args.run,
+                         max_tasks=args.max_tasks, max_messages=args.max_messages,
+                         max_wall_time=args.max_wall_time)
                 return 0
             case "approve":
                 return cmd_approve(store, args.msg_id)

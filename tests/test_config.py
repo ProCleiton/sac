@@ -288,3 +288,39 @@ class ReplySchemaDefaultTest(unittest.TestCase):
             self._load(VALID.replace(
                 'name = "sac-test"',
                 'name = "sac-test"\nreply_schema_default = \'[1, 2]\''))
+
+
+class BudgetsConfigTest(unittest.TestCase):
+    """v23e: campos max_tasks_per_run / max_messages_per_run / max_wall_time_per_run."""
+
+    def _load(self, text):
+        d = tempfile.mkdtemp()
+        p = Path(d) / "sac.toml"
+        p.write_text(text, encoding="utf-8")
+        return load_config(p)
+
+    def test_budgets_configurados(self):
+        cfg = self._load(VALID.replace(
+            'name = "sac-test"',
+            'name = "sac-test"\nmax_tasks_per_run = 50\n'
+            'max_messages_per_run = 200\nmax_wall_time_per_run = 3600'))
+        self.assertEqual(cfg.max_tasks_per_run, 50)
+        self.assertEqual(cfg.max_messages_per_run, 200)
+        self.assertEqual(cfg.max_wall_time_per_run, 3600)
+
+    def test_budgets_ausentes_ilimitado(self):
+        cfg = self._load(VALID)
+        self.assertEqual(cfg.max_tasks_per_run, 0)
+        self.assertEqual(cfg.max_messages_per_run, 0)
+        self.assertEqual(cfg.max_wall_time_per_run, 0)
+
+    def test_budget_negativo_rejeitado(self):
+        with self.assertRaises(ConfigError) as ctx:
+            self._load(VALID.replace('name = "sac-test"',
+                                     'name = "sac-test"\nmax_tasks_per_run = -1'))
+        self.assertIn("max_tasks_per_run deve ser >= 0", str(ctx.exception))
+
+    def test_budget_nao_inteiro_rejeitado(self):
+        with self.assertRaises(ConfigError):
+            self._load(VALID.replace('name = "sac-test"',
+                                     'name = "sac-test"\nmax_messages_per_run = "muitas"'))

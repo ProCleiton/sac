@@ -14,6 +14,7 @@ import threading
 import time
 from pathlib import Path
 
+from .budget import BudgetTracker
 from .config import Config, ConfigError
 from .fanout import TIMEOUT_DEFAULT, FanOutCollector
 from .reply_validator import ReplyValidator
@@ -37,6 +38,8 @@ class Daemon:
         self._approval_rendered: set[str] = set()
         self.fanout = FanOutCollector(store)
         self._fanout_timers: dict[str, threading.Timer] = {}
+        self._budget_exceeded: set[tuple[str, str]] = set()
+        self._budget_blocked: set[str] = set()
 
     def _poke_interval(self, msg_id: str) -> float:
         for agent_name, msgs in self._poke_state.items():
@@ -198,6 +201,8 @@ class Daemon:
             if first is not None and first.reply_to_fanout:
                 self._coletar_reply_fanout(name, self.store.next(name))
                 return
+            if first is not None and first.run and self._run_suspensa(name, first):
+                return
         pid = self.tmux.find_pane_id(name)
         if not pid:
             if pend:
@@ -222,6 +227,29 @@ class Daemon:
         self.store.log("deliver", agent=name, id=msg.id, sender=msg.sender, **extra)
         if msg.reply_to:
             self.store.finish_reply(name, msg.id)
+
+    def _run_suspensa(self, name: str, msg: Message) -> bool:
+        """Run suspensa por budget: não entrega; registra suspensão e bloqueio.
+
+        O grace period (30s após o teto de wall time) é derivado do relógio
+        contra o `run_start` do journal — claimed em andamento pode concluir.
+        """
+        tracker = BudgetTracker(self.store.root, msg.run)
+        dim = tracker.exceeded(grace=True)
+        if dim is None:
+            return False
+        key = (msg.run, dim)
+        if key not in self._budget_exceeded:
+            self._budget_exceeded.add(key)
+            limit = tracker.budgets().limit(dim)
+            self.store.log("budget_exceeded", run=msg.run, budget=dim,
+                           limit=limit, agent=name)
+            tracker.journal.log_entry("budget_exceeded", budget=dim, limit=limit)
+        if msg.id not in self._budget_blocked:
+            self._budget_blocked.add(msg.id)
+            self.store.log("budget_blocked", run=msg.run, budget=dim,
+                           agent=name, id=msg.id)
+        return True
 
     def _reject_reply(self, name: str, msg: Message, errors: list[str]) -> None:
         """Reply inválida: não entrega, arquiva em done e devolve erro ao agente."""

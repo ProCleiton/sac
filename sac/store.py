@@ -80,7 +80,8 @@ class Store:
     def send(self, sender: str, recipient: str, body: str, now: datetime | None = None,
              msg_type: str | None = None, state: str | None = None,
              reply_to: str | None = None, reply_schema: dict | None = None,
-             run: str | None = None, fanout_id: str | None = None) -> str:
+             run: str | None = None, fanout_id: str | None = None,
+             run_budgets: dict | None = None) -> str:
         now = now or datetime.now()
         stamp = now.strftime("%Y%m%d-%H%M%S")
         existing = []
@@ -89,6 +90,9 @@ class Store:
         seq = max((int(i.split("-")[2]) for i in existing), default=0) + 1
         mid = f"{stamp}-{seq:03d}-from-{sender}"
         reply_to = reply_to or self._infer_reply_to(sender, recipient)
+        explicit_run = run is not None
+        if run is None:
+            run = self._propagate_run(sender, reply_to)
         reply_line = f"reply_to: {reply_to}\n" if reply_to else ""
         type_line = f"type: {msg_type}\n" if msg_type else ""
         state_line = f"state: {state}\n" if state else ""
@@ -107,9 +111,13 @@ class Store:
         self.log("send", now=now, sender=sender, to=recipient, id=mid, **extra)
         if run:
             journal = RunJournal(self.root, run)
-            journal.ensure(now=now)
-            journal.log_entry("task_sent", now=now, msg_id=mid,
-                              sender=sender, to=recipient)
+            if explicit_run:
+                journal.ensure(now=now, **(run_budgets or {}))
+                journal.log_entry("task_sent", now=now, msg_id=mid,
+                                  sender=sender, to=recipient)
+            elif journal.exists():
+                journal.log_entry("reply_sent", now=now, msg_id=mid,
+                                  sender=sender, to=recipient)
         return mid
 
     def _infer_reply_to(self, sender: str, recipient: str) -> str | None:
@@ -120,6 +128,19 @@ class Store:
             if msg.sender == recipient:
                 return msg.id
         return None
+
+    def infer_reply_to(self, sender: str, recipient: str) -> str | None:
+        """Wrapper público de _infer_reply_to (usado pelo gate de budgets)."""
+        return self._infer_reply_to(sender, recipient)
+
+    def _propagate_run(self, sender: str, reply_to: str | None) -> str | None:
+        """Reply de uma tarefa de run herda o run_id da mensagem original."""
+        if not reply_to:
+            return None
+        original = self._locate(sender, reply_to)
+        if original is None:
+            return None
+        return self._parse(original).run
 
     def _propagate_fanout(self, sender: str, reply_to: str | None) -> str | None:
         """Reply de uma tarefa de fan-out herda o grupo como `reply_to_fanout`."""

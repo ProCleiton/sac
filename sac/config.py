@@ -33,6 +33,9 @@ class Config:
     socket: str | None = None
     root: str | None = None
     reply_schema_default: dict | None = None
+    max_tasks_per_run: int = 0
+    max_messages_per_run: int = 0
+    max_wall_time_per_run: int = 0
     windows: dict[str, str] = field(default_factory=dict)
     agents: list[AgentConfig] = field(default_factory=list)
 
@@ -130,6 +133,12 @@ def load_config(path: Path) -> Config:
             raise ConfigError(f"session.{key} deve ser inteiro positivo: {v}")
         return v
 
+    def _session_budget(key: str) -> int:
+        v = session.get(key, 0)
+        if not isinstance(v, int) or isinstance(v, bool) or v < 0:
+            raise ConfigError(f"{key} deve ser >= 0")
+        return v
+
     return Config(
         session_name=session.get("name", "sac"),
         notify_interval=int(session.get("notify_interval", 30)),
@@ -141,6 +150,9 @@ def load_config(path: Path) -> Config:
         socket=(str(Path(session["socket"]).expanduser()) if session.get("socket") else None),
         root=session_root,
         reply_schema_default=reply_schema_default,
+        max_tasks_per_run=_session_budget("max_tasks_per_run"),
+        max_messages_per_run=_session_budget("max_messages_per_run"),
+        max_wall_time_per_run=_session_budget("max_wall_time_per_run"),
         windows=windows,
         agents=agents,
     )
