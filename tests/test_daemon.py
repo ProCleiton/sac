@@ -409,3 +409,93 @@ class EscalationTest(unittest.TestCase):
                          "4º poke na mesma mensagem NÃO deve escalar de novo")
         self.assertEqual(len(self.store.pending("leader")), 1,
                          "apenas 1 mensagem de escalonamento ao líder")
+
+
+SCHEMA_VEREDITO = {
+    "type": "object",
+    "properties": {"veredito": {"enum": ["APROVADO", "REPROVADO"]}},
+    "required": ["veredito"],
+}
+
+
+class ReplySchemaDaemonTest(unittest.TestCase):
+    def setUp(self):
+        self.d = Path(tempfile.mkdtemp())
+        (self.d / "sac.toml").write_text(VALID, encoding="utf-8")
+        self.cfg = load_config(self.d / "sac.toml")
+        self.store = Store(self.d / ".sac")
+        self.runner = FakeRunner()
+        self.runner.outputs["list-panes"] = "%1|env SAC_AGENT=leader kimi\n"
+        self.tmux = Tmux("sac-test", runner=self.runner)
+
+    def _daemon(self):
+        from sac.daemon import Daemon
+        return Daemon(self.cfg, self.store, self.tmux)
+
+    def _setup_reply(self, body: str):
+        """Líder envia tarefa com reply_schema; dev-1 clama e responde."""
+        self.store.send("leader", "dev-1", "valide X",
+                        reply_schema=SCHEMA_VEREDITO, now=datetime.now())
+        self.store.next("dev-1")
+        self.store.send("dev-1", "leader", body, now=datetime.now())
+
+    def _log_text(self):
+        return (self.store.root / "log.jsonl").read_text(encoding="utf-8")
+
+    def test_daemon_valida_reply_com_schema(self):
+        from unittest.mock import patch
+        d = self._daemon()
+        self._setup_reply('{"veredito": "APROVADO"}')
+        with patch("sac.tmux.time.sleep"):
+            d._deliver_next("leader")
+        log = self._log_text()
+        self.assertIn('"validation": "ok"', log,
+                      "reply válida deve registrar validation ok no deliver")
+        send_body = [c for c in self.runner.calls
+                     if c[1] == "send-keys" and len(c) > 3 and "-l" in c]
+        self.assertEqual(len(send_body), 1, "reply válida deve ser entregue")
+        self.assertIn("APROVADO", str(send_body[0]))
+        self.assertEqual(self.store.claimed("leader"), [], "reply auto-ackada")
+
+    def test_daemon_rejeita_reply_invalida(self):
+        from unittest.mock import patch
+        d = self._daemon()
+        self._setup_reply('{"veredito": "INVALIDO"}')
+        with patch("sac.tmux.time.sleep"):
+            d._deliver_next("leader")
+        send_body = [c for c in self.runner.calls
+                     if c[1] == "send-keys" and len(c) > 3 and "-l" in c]
+        self.assertEqual(len(send_body), 0,
+                         "reply inválida NÃO deve ser entregue ao remetente")
+        self.assertEqual(self.store.pending("leader"), [],
+                         "reply rejeitada não fica na inbox do destinatário")
+        self.assertEqual(self.store.claimed("leader"), [],
+                         "reply rejeitada vai para done (não entra em loop)")
+        erros = [self.store._parse(p).body
+                 for p in (self.store.root / "inbox" / "dev-1").glob("*.msg")]
+        self.assertEqual(len(erros), 1, "daemon deve devolver erro ao agente")
+        self.assertIn("reply rejeitada", erros[0])
+        self.assertIn("INVALIDO", erros[0], "erro deve detalhar a violação")
+
+    def test_daemon_validation_error_logged(self):
+        from unittest.mock import patch
+        d = self._daemon()
+        self._setup_reply('{"veredito": "INVALIDO"}')
+        with patch("sac.tmux.time.sleep"):
+            d._deliver_next("leader")
+        self.assertIn('"validation_error"', self._log_text(),
+                      "reply inválida deve registrar validation_error no log")
+
+    def test_daemon_reply_sem_schema_nao_valida(self):
+        from unittest.mock import patch
+        d = self._daemon()
+        self.store.send("leader", "dev-1", "faça X", now=datetime.now())
+        self.store.next("dev-1")
+        self.store.send("dev-1", "leader", "pronto, texto livre", now=datetime.now())
+        with patch("sac.tmux.time.sleep"):
+            d._deliver_next("leader")
+        send_body = [c for c in self.runner.calls
+                     if c[1] == "send-keys" and len(c) > 3 and "-l" in c]
+        self.assertEqual(len(send_body), 1,
+                         "sem schema, reply é entregue sem validação (compat)")
+        self.assertNotIn("validation_error", self._log_text())

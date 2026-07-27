@@ -1775,3 +1775,62 @@ class UninstallTest(unittest.TestCase):
         rc = self.cmd_uninstall(d2, None, None, stdout=saida.append)
         self.assertEqual(rc, 0)
         self.assertIn("nada para remover", "\n".join(saida))
+
+
+SCHEMA_OK_FAIL = ('{"type": "object", '
+                  '"properties": {"veredito": {"enum": ["OK", "FAIL"]}}, '
+                  '"required": ["veredito"]}')
+
+
+class ReplySchemaSendTest(unittest.TestCase):
+    def setUp(self):
+        self.d = Path(tempfile.mkdtemp())
+        (self.d / "sac.toml").write_text(VALID, encoding="utf-8")
+        self.cfg = load_config(self.d / "sac.toml")
+        self.store = Store(self.d / ".sac")
+        self.tmux = Tmux("sac-test", runner=FakeRunner())
+
+    def _msg_file(self, mid):
+        return self.store.root / "inbox" / "dev-1" / f"{mid}.msg"
+
+    def test_cmd_send_com_schema(self):
+        mid = cmd_send(self.cfg, self.store, self.tmux, "dev-1", "Valide a config",
+                       schema=SCHEMA_OK_FAIL)
+        content = self._msg_file(mid).read_text(encoding="utf-8")
+        self.assertIn("reply_schema: ", content,
+                      "cabeçalho deve conter reply_schema")
+        msg = self.store._parse(self._msg_file(mid))
+        self.assertEqual(msg.reply_schema["type"], "object")
+        self.assertEqual(msg.reply_schema["properties"]["veredito"]["enum"], ["OK", "FAIL"])
+
+    def test_cmd_send_sem_schema_compat(self):
+        mid = cmd_send(self.cfg, self.store, self.tmux, "dev-1", "tarefa")
+        content = self._msg_file(mid).read_text(encoding="utf-8")
+        self.assertNotIn("reply_schema", content,
+                         "sem schema: comportamento atual inalterado")
+        msg = self.store._parse(self._msg_file(mid))
+        self.assertIsNone(msg.reply_schema)
+
+    def test_cmd_send_schema_default_config(self):
+        (self.d / "sac.toml").write_text(
+            VALID.replace('name = "sac-test"',
+                          f'name = "sac-test"\nreply_schema_default = \'{SCHEMA_OK_FAIL}\''),
+            encoding="utf-8")
+        cfg = load_config(self.d / "sac.toml")
+        mid = cmd_send(cfg, self.store, self.tmux, "dev-1", "tarefa")
+        msg = self.store._parse(self._msg_file(mid))
+        self.assertIsNotNone(msg.reply_schema,
+                             "schema default do sac.toml deve ser aplicado")
+        self.assertEqual(msg.reply_schema["type"], "object")
+
+    def test_cmd_send_schema_flag_sobrepoe_default(self):
+        (self.d / "sac.toml").write_text(
+            VALID.replace('name = "sac-test"',
+                          'name = "sac-test"\nreply_schema_default = \'{"type": "string"}\''),
+            encoding="utf-8")
+        cfg = load_config(self.d / "sac.toml")
+        mid = cmd_send(cfg, self.store, self.tmux, "dev-1", "tarefa",
+                       schema=SCHEMA_OK_FAIL)
+        msg = self.store._parse(self._msg_file(mid))
+        self.assertEqual(msg.reply_schema["type"], "object",
+                         "--schema explícito tem precedência sobre o default")

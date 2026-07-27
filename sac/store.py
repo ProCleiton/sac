@@ -27,6 +27,7 @@ class Message:
     reply_to: str | None = None
     type: str | None = None
     state: str | None = None
+    reply_schema: dict | None = None
 
 
 class Store:
@@ -58,13 +59,20 @@ class Store:
     def _parse(path: Path) -> Message:
         head, _, body = path.read_text(encoding="utf-8").partition("\n\n")
         meta = dict(line.split(": ", 1) for line in head.splitlines())
+        reply_schema = None
+        if meta.get("reply_schema"):
+            try:
+                reply_schema = json.loads(meta["reply_schema"])
+            except json.JSONDecodeError:
+                reply_schema = None
         return Message(meta["id"], meta["from"], meta["to"], meta["ts"], body,
                        reply_to=meta.get("reply_to"),
-                       type=meta.get("type"), state=meta.get("state"))
+                       type=meta.get("type"), state=meta.get("state"),
+                       reply_schema=reply_schema)
 
     def send(self, sender: str, recipient: str, body: str, now: datetime | None = None,
              msg_type: str | None = None, state: str | None = None,
-             reply_to: str | None = None) -> str:
+             reply_to: str | None = None, reply_schema: dict | None = None) -> str:
         now = now or datetime.now()
         stamp = now.strftime("%Y%m%d-%H%M%S")
         existing = []
@@ -76,8 +84,10 @@ class Store:
         reply_line = f"reply_to: {reply_to}\n" if reply_to else ""
         type_line = f"type: {msg_type}\n" if msg_type else ""
         state_line = f"state: {state}\n" if state else ""
+        schema_line = (f"reply_schema: {json.dumps(reply_schema, ensure_ascii=False, sort_keys=True)}\n"
+                       if reply_schema else "")
         content = (f"id: {mid}\nfrom: {sender}\nto: {recipient}\nts: {now.isoformat()}\n"
-                   f"{reply_line}{type_line}{state_line}\n{body}")
+                   f"{reply_line}{type_line}{state_line}{schema_line}\n{body}")
         (self._dir("inbox", recipient) / f"{mid}.msg").write_text(content, encoding="utf-8")
         extra = {"type": msg_type} if msg_type else {}
         self.log("send", now=now, sender=sender, to=recipient, id=mid, **extra)
@@ -98,6 +108,11 @@ class Store:
             if p.is_file():
                 return p
         return None
+
+    def find(self, agent: str, msg_id: str) -> Message | None:
+        """Localiza e parseia uma mensagem do agente em qualquer estágio."""
+        p = self._locate(agent, msg_id)
+        return self._parse(p) if p is not None else None
 
     def is_approval_request(self, agent: str, msg_id: str) -> bool:
         p = self._locate(agent, msg_id)

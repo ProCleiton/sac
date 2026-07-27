@@ -14,6 +14,7 @@ from pathlib import Path
 from .config import Config, ConfigError
 from .harness_adapters import harness_args, harness_env
 from .plugins_manifest import bin_dir, sac_home
+from .reply_validator import ReplyValidator
 from .store import Store, StoreError
 from .tmux import Tmux
 
@@ -51,7 +52,8 @@ def _daemon_active(store: Store) -> bool:
 
 
 def cmd_send(cfg: Config, store: Store, tmux: Tmux, to: str, body: str,
-             sender: str = "user", approval: bool = False) -> str:
+             sender: str = "user", approval: bool = False,
+             schema: str | None = None) -> str:
     if approval:
         try:
             papel = cfg.agent(sender).role
@@ -65,7 +67,12 @@ def cmd_send(cfg: Config, store: Store, tmux: Tmux, to: str, body: str,
                           msg_type="approval_request", state="pending")
     if to != "user":
         cfg.agent(to)
-    mid = store.send(sender, to, body)
+    reply_schema = None
+    if schema is not None:
+        reply_schema = ReplyValidator.parse_schema(schema)
+    elif cfg.reply_schema_default is not None:
+        reply_schema = cfg.reply_schema_default
+    mid = store.send(sender, to, body, reply_schema=reply_schema)
     if to == "user":
         return mid
     if _daemon_active(store):

@@ -14,6 +14,7 @@ import time
 from pathlib import Path
 
 from .config import Config, ConfigError
+from .reply_validator import ReplyValidator
 from .store import Message, Store
 from .tmux import Tmux
 
@@ -143,11 +144,32 @@ class Daemon:
         msg = self.store.next(name)
         if msg is None:
             return
+        validation = None
+        if msg.reply_to:
+            original = self.store.find(msg.sender, msg.reply_to)
+            schema = original.reply_schema if original else None
+            if schema is not None:
+                ok, errors = ReplyValidator.validate(msg.body, schema)
+                if not ok:
+                    self._reject_reply(name, msg, errors)
+                    return
+                validation = "ok"
         body = f"{POKE_HINT}\n{msg.body}"
         self.tmux.poke_with_enter(pid, body)
-        self.store.log("deliver", agent=name, id=msg.id, sender=msg.sender)
+        extra = {"validation": validation} if validation else {}
+        self.store.log("deliver", agent=name, id=msg.id, sender=msg.sender, **extra)
         if msg.reply_to:
             self.store.finish_reply(name, msg.id)
+
+    def _reject_reply(self, name: str, msg: Message, errors: list[str]) -> None:
+        """Reply inválida: não entrega, arquiva em done e devolve erro ao agente."""
+        self.store.log("validation_error", agent=name, id=msg.id,
+                       sender=msg.sender, errors=errors)
+        self.store.finish_reply(name, msg.id)
+        detalhes = "; ".join(errors)
+        self.store.send("daemon", msg.sender,
+                        f"reply rejeitada — violação do schema: {detalhes}\n"
+                        f"corrija o formato e reenvie a resposta da tarefa {msg.reply_to}")
 
     def _maybe_escalate(self, name: str, msg_id: str, pokes: int) -> None:
         if pokes < self.cfg.poke_escalate_after or msg_id in self._escalated:
