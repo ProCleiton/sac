@@ -8,6 +8,8 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
+from .run import RunJournal
+
 
 class StoreError(Exception):
     """Operação inválida sobre mensagens."""
@@ -28,6 +30,7 @@ class Message:
     type: str | None = None
     state: str | None = None
     reply_schema: dict | None = None
+    run: str | None = None
 
 
 class Store:
@@ -68,11 +71,12 @@ class Store:
         return Message(meta["id"], meta["from"], meta["to"], meta["ts"], body,
                        reply_to=meta.get("reply_to"),
                        type=meta.get("type"), state=meta.get("state"),
-                       reply_schema=reply_schema)
+                       reply_schema=reply_schema, run=meta.get("run"))
 
     def send(self, sender: str, recipient: str, body: str, now: datetime | None = None,
              msg_type: str | None = None, state: str | None = None,
-             reply_to: str | None = None, reply_schema: dict | None = None) -> str:
+             reply_to: str | None = None, reply_schema: dict | None = None,
+             run: str | None = None) -> str:
         now = now or datetime.now()
         stamp = now.strftime("%Y%m%d-%H%M%S")
         existing = []
@@ -86,11 +90,17 @@ class Store:
         state_line = f"state: {state}\n" if state else ""
         schema_line = (f"reply_schema: {json.dumps(reply_schema, ensure_ascii=False, sort_keys=True)}\n"
                        if reply_schema else "")
+        run_line = f"run: {run}\n" if run else ""
         content = (f"id: {mid}\nfrom: {sender}\nto: {recipient}\nts: {now.isoformat()}\n"
-                   f"{reply_line}{type_line}{state_line}{schema_line}\n{body}")
+                   f"{reply_line}{type_line}{state_line}{schema_line}{run_line}\n{body}")
         (self._dir("inbox", recipient) / f"{mid}.msg").write_text(content, encoding="utf-8")
         extra = {"type": msg_type} if msg_type else {}
         self.log("send", now=now, sender=sender, to=recipient, id=mid, **extra)
+        if run:
+            journal = RunJournal(self.root, run)
+            journal.ensure(now=now)
+            journal.log_entry("task_sent", now=now, msg_id=mid,
+                              sender=sender, to=recipient)
         return mid
 
     def _infer_reply_to(self, sender: str, recipient: str) -> str | None:
@@ -177,6 +187,14 @@ class Store:
         if src.exists():
             self.log("loop_error", error=f"finish_move_orphan: src still exists after move", agent=agent, id=msg_id)
             return False
+        msg = self._parse(dst)
+        if msg.run:
+            try:
+                RunJournal(self.root, msg.run).log_entry(
+                    "task_done", now=now, msg_id=msg_id, result_summary=summary)
+            except OSError as e:
+                self.log("loop_error", error=f"run_journal_write_failed: {e}",
+                         agent=agent, id=msg_id)
         return True
 
     def _log_done(self, agent: str, msg_id: str, summary: str, now: datetime | None = None) -> None:

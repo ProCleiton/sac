@@ -9,8 +9,8 @@ from pathlib import Path
 
 from .commands import (
     cmd_approve, cmd_done, cmd_doctor, cmd_down, cmd_inject, cmd_kill, cmd_log,
-    cmd_next, cmd_notify, cmd_recv, cmd_respond, cmd_send, cmd_sidebar,
-    cmd_sidebar_toggle, cmd_status, cmd_uninstall, cmd_up,
+    cmd_next, cmd_notify, cmd_recv, cmd_respond, cmd_resume, cmd_runs, cmd_send,
+    cmd_sidebar, cmd_sidebar_toggle, cmd_status, cmd_uninstall, cmd_up,
 )
 from .config import ConfigError, load_config
 from .init import cmd_init
@@ -72,6 +72,9 @@ def _build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--schema", default=None, metavar="JSON",
                     help="reply_schema (JSON Schema, subconjunto) esperado da resposta; "
                          "o daemon valida a reply antes de entregar")
+    sp.add_argument("--run", default=None, metavar="ID",
+                    help="associa a mensagem a uma run (agrupador nomeado); "
+                         "a run é criada implicitamente no primeiro uso")
 
     sp = sub.add_parser("approve", help="aprova uma approval_request pendente")
     sp.add_argument("msg_id")
@@ -88,6 +91,12 @@ def _build_parser() -> argparse.ArgumentParser:
     sp = sub.add_parser("recv", help="lê a resposta de um agente")
     sp.add_argument("agent")
     sp.add_argument("--lines", type=int, default=200)
+
+    sub.add_parser("runs", help="lista as runs com status agregado (sent/done/pending)")
+
+    sp = sub.add_parser("resume", help="reconcilia uma run interrompida: re-entrega "
+                                       "mensagens não concluídas (nunca re-executa done)")
+    sp.add_argument("run_id")
 
     sp = sub.add_parser("notify", help="watcher de re-cutucadas")
     sp.add_argument("--once", action="store_true")
@@ -237,7 +246,7 @@ def main(argv: list[str] | None = None) -> int:
             case "send":
                 cmd_send(cfg, store, tmux, args.to, args.body,
                          sender=os.environ.get("SAC_AGENT", "user"),
-                         approval=args.approval, schema=args.schema)
+                         approval=args.approval, schema=args.schema, run=args.run)
                 return 0
             case "approve":
                 return cmd_approve(store, args.msg_id)
@@ -248,6 +257,10 @@ def main(argv: list[str] | None = None) -> int:
                 return cmd_done(store, os.environ, args.msg_id, " ".join(args.summary))
             case "recv":
                 return cmd_recv(cfg, tmux, args.agent, args.lines)
+            case "runs":
+                return cmd_runs(store)
+            case "resume":
+                return cmd_resume(cfg, store, tmux, args.run_id)
             case "notify":
                 return cmd_notify(cfg, store, tmux, once=args.once)
             case "log":
