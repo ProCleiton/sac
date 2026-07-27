@@ -12,6 +12,7 @@ from collections.abc import Callable, Mapping
 from datetime import datetime
 from pathlib import Path
 
+from .budget import Budgets, BudgetTracker
 from .config import Config, ConfigError
 from .fanout import TIMEOUT_DEFAULT, FanOutManager
 from .harness_adapters import harness_args, harness_env
@@ -54,9 +55,41 @@ def _daemon_active(store: Store) -> bool:
         return True
 
 
+def _budget_overrides(max_tasks: int | None, max_messages: int | None,
+                      max_wall_time: int | None) -> dict[str, int]:
+    given = {"max_tasks": max_tasks, "max_messages": max_messages,
+             "max_wall_time": max_wall_time}
+    out = {}
+    for k, v in given.items():
+        if v is None:
+            continue
+        if v < 0:
+            raise StoreError(f"--{k.replace('_', '-')} deve ser >= 0")
+        out[k] = v
+    return out
+
+
+def _enforce_budget_send(store: Store, run_id: str, is_reply: bool,
+                         sender: str) -> None:
+    """Gate do send: rejeita mensagem se algum budget da run foi atingido."""
+    tracker = BudgetTracker(store.root, run_id)
+    dim = tracker.exceeded(grace=is_reply)
+    if dim is None:
+        return
+    limit = tracker.budgets().limit(dim)
+    store.log("budget_exceeded", run=run_id, budget=dim, limit=limit, sender=sender)
+    tracker.journal.log_entry("budget_exceeded", budget=dim, limit=limit)
+    raise StoreError(f"limite de {tracker.label(dim)} da run excedido ({limit})")
+
+
 def cmd_send(cfg: Config, store: Store, tmux: Tmux, to: str, body: str,
              sender: str = "user", approval: bool = False,
-             schema: str | None = None, run: str | None = None) -> str:
+             schema: str | None = None, run: str | None = None,
+             max_tasks: int | None = None, max_messages: int | None = None,
+             max_wall_time: int | None = None) -> str:
+    overrides = _budget_overrides(max_tasks, max_messages, max_wall_time)
+    if overrides and not run:
+        raise StoreError("flags de budget exigem --run")
     if approval:
         try:
             papel = cfg.agent(sender).role
@@ -75,7 +108,31 @@ def cmd_send(cfg: Config, store: Store, tmux: Tmux, to: str, body: str,
         reply_schema = ReplyValidator.parse_schema(schema)
     elif cfg.reply_schema_default is not None:
         reply_schema = cfg.reply_schema_default
-    mid = store.send(sender, to, body, reply_schema=reply_schema, run=run)
+    run_eff = run
+    is_reply = False
+    reply_to_inferred = store.infer_reply_to(sender, to)
+    if run_eff is None and reply_to_inferred:
+        original = store.find(sender, reply_to_inferred)
+        if original is not None and original.run:
+            run_eff, is_reply = original.run, True
+    elif run_eff is not None and reply_to_inferred:
+        is_reply = True
+    run_budgets = None
+    if run_eff is not None:
+        journal = RunJournal(store.root, run_eff)
+        if journal.exists():
+            if run and overrides:
+                print(f"aviso: flags de budget só valem na criação da run; "
+                      f"budgets da run '{run_eff}' mantidos", file=sys.stderr)
+            _enforce_budget_send(store, run_eff, is_reply, sender)
+        elif run:
+            budgets = Budgets(
+                max_tasks=overrides.get("max_tasks", cfg.max_tasks_per_run),
+                max_messages=overrides.get("max_messages", cfg.max_messages_per_run),
+                max_wall_time=overrides.get("max_wall_time", cfg.max_wall_time_per_run))
+            run_budgets = {"budgets": budgets.journal_value()}
+    mid = store.send(sender, to, body, reply_schema=reply_schema, run=run,
+                     run_budgets=run_budgets)
     if to == "user":
         return mid
     if _daemon_active(store):

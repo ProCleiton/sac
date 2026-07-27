@@ -45,11 +45,11 @@ class RunJournal:
     def exists(self) -> bool:
         return self.path.is_file()
 
-    def ensure(self, now: datetime | None = None) -> None:
+    def ensure(self, now: datetime | None = None, **fields) -> None:
         """Cria a run (dir + entrada `run_start`) se ainda não existir."""
         if self.path.is_file():
             return
-        self.log_entry("run_start", now=now)
+        self.log_entry("run_start", now=now, **fields)
 
     def log_entry(self, event: str, now: datetime | None = None, **fields) -> None:
         """Appenda uma entrada no journal com fsync antes do retorno."""
