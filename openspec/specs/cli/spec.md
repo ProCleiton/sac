@@ -458,7 +458,7 @@ só em bloqueio real (substitui os loops declarados, removidos na v26b). O
 agente 1 recebe o contrato de líder sem pergunta; agentes 2+ escolhem em lista
 numerada que EXCLUI o papel de líder (só pode haver um líder — o agente 1),
 com default "desenvolvedor". O contrato gerado em `prompts/<nome>.md` é
-editável pelo usuário depois do init.
+editável pelo usuário depois do init. Todo contrato SHALL instruir que arquivos auto-carregados pelo harness (AGENTS.md, CLAUDE.md, regras-comuns.md) são contexto de PROJETO: workflow e memória seguem o contrato SAC e o `sac memory` — não ler pendencias.md nem executar rituais de sessão direta.
 
 #### Scenario: agente 1 recebe contrato de líder sem pergunta
 - **GIVEN** o wizard configurando o agente 1
