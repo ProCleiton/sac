@@ -9,12 +9,14 @@ import signal
 import sys
 import time
 from collections.abc import Callable, Mapping
+from datetime import datetime
 from pathlib import Path
 
 from .config import Config, ConfigError
 from .harness_adapters import harness_args, harness_env
 from .plugins_manifest import bin_dir, sac_home
 from .reply_validator import ReplyValidator
+from .run import RunError, RunJournal
 from .store import Store, StoreError
 from .tmux import Tmux
 
@@ -53,7 +55,7 @@ def _daemon_active(store: Store) -> bool:
 
 def cmd_send(cfg: Config, store: Store, tmux: Tmux, to: str, body: str,
              sender: str = "user", approval: bool = False,
-             schema: str | None = None) -> str:
+             schema: str | None = None, run: str | None = None) -> str:
     if approval:
         try:
             papel = cfg.agent(sender).role
@@ -72,7 +74,7 @@ def cmd_send(cfg: Config, store: Store, tmux: Tmux, to: str, body: str,
         reply_schema = ReplyValidator.parse_schema(schema)
     elif cfg.reply_schema_default is not None:
         reply_schema = cfg.reply_schema_default
-    mid = store.send(sender, to, body, reply_schema=reply_schema)
+    mid = store.send(sender, to, body, reply_schema=reply_schema, run=run)
     if to == "user":
         return mid
     if _daemon_active(store):
@@ -154,6 +156,87 @@ def cmd_done(store: Store, env: Mapping[str, str], msg_id: str, summary: str) ->
         print(f"erro: falha ao mover {msg_id} para done/ (detalhes no log.jsonl)", file=sys.stderr)
         return 1
     print(f"ok: {msg_id} concluída")
+    return 0
+
+
+def cmd_runs(store: Store) -> int:
+    """Lista as runs conhecidas com contagens derivadas do journal."""
+    ids = RunJournal.list_ids(store.root)
+    if not ids:
+        print("nenhuma run encontrada")
+        return 0
+    for run_id in ids:
+        journal = RunJournal(store.root, run_id)
+        c = journal.counts()
+        status = "concluída" if journal.is_complete() else "em andamento"
+        print(f"{run_id}: sent={c['sent']} done={c['done']} "
+              f"pending={c['pending']} ({status})")
+    return 0
+
+
+def _msg_age_seconds(msg_id: str, now: datetime) -> float | None:
+    """Idade da mensagem em segundos, derivada do timestamp do id (None se inválido)."""
+    try:
+        ts = datetime.strptime(msg_id[:15], "%Y%m%d-%H%M%S")
+    except ValueError:
+        return None
+    return (now - ts).total_seconds()
+
+
+def _reentregar(store: Store, tmux: Tmux, agent: str) -> None:
+    """Re-cutuca o pane do agente (daemon ativo entrega sozinho)."""
+    if _daemon_active(store):
+        return
+    if tmux.has_session():
+        pid = tmux.find_pane_id(agent)
+        if pid:
+            tmux.poke_with_enter(pid, POKE_TEXT)
+
+
+def cmd_resume(cfg: Config, store: Store, tmux: Tmux, run_id: str) -> int:
+    """Reconcilia o journal da run com a fila: re-entrega pending e claimed órfãs.
+
+    Não executa tarefas nem toca mensagens done — só repõe na fila o que se
+    perdeu com a morte do daemon/agente.
+    """
+    try:
+        journal = RunJournal(store.root, run_id)
+    except RunError as e:
+        print(f"erro: {e}", file=sys.stderr)
+        return 1
+    if not journal.exists():
+        print(f"erro: run não encontrada: {run_id}", file=sys.stderr)
+        return 1
+    pendentes = journal.pending_messages()
+    if not pendentes:
+        c = journal.counts()
+        print(f"run '{run_id}' já concluída: {c['done']}/{c['sent']} mensagens done")
+        return 0
+    now = datetime.now()
+    reentregues = reenfileiradas = 0
+    for entry in pendentes:
+        mid, agent = entry.get("msg_id"), entry.get("to")
+        if not mid or not agent:
+            continue
+        inbox_f = store.root / "inbox" / agent / f"{mid}.msg"
+        claimed_f = store.root / "claimed" / agent / f"{mid}.msg"
+        if inbox_f.is_file():
+            _reentregar(store, tmux, agent)
+            store.log("resume", run=run_id, agent=agent, id=mid)
+            reentregues += 1
+        elif claimed_f.is_file():
+            age = _msg_age_seconds(mid, now)
+            if age is not None and age > cfg.poke_stale_after:
+                claimed_f.rename(store._dir("inbox", agent) / claimed_f.name)
+                store.log("requeue", run=run_id, agent=agent, id=mid)
+                _reentregar(store, tmux, agent)
+                reenfileiradas += 1
+            # claimed recente: agente possivelmente trabalhando — não toca
+        else:
+            print(f"aviso: {mid} sem task_done no journal mas fora da fila de "
+                  f"'{agent}' — verifique manualmente", file=sys.stderr)
+    print(f"resume '{run_id}': {reentregues} pendente(s) re-entregue(s), "
+          f"{reenfileiradas} claimed órfã(s) reenfileirada(s)")
     return 0
 
 
