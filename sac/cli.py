@@ -50,8 +50,11 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument("--config", default=None,
                    help="caminho do sac.toml (default: $SAC_CONFIG, ./.sac/sac.toml ou ./sac.toml)")
     p.add_argument("--sac-root", help="diretório raiz da fila (padrão: diretório do config / .sac)")
-    p.add_argument("--version", action="version",
-                   version=importlib.metadata.version("sac"))
+    try:
+        _ver = importlib.metadata.version("sac")
+    except importlib.metadata.PackageNotFoundError:
+        _ver = "0.0.0+local"
+    p.add_argument("--version", action="version", version=_ver)
     sub = p.add_subparsers(dest="command", required=True)
 
     sub.add_parser("up", help="sobe a sessão tmux com os agentes")

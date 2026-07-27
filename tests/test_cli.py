@@ -61,6 +61,20 @@ class CliTest(unittest.TestCase):
         self.assertTrue(len(out) > 0, "--version imprime algo")
         self.assertNotIn("erro", out.lower())
 
+    def test_version_fallback_quando_pacote_nao_instalado(self):
+        import importlib.metadata
+        from io import StringIO
+        import sys
+        from unittest.mock import patch
+        buf = StringIO()
+        with patch.object(sys, "stdout", buf):
+            with patch.object(importlib.metadata, "version",
+                              side_effect=importlib.metadata.PackageNotFoundError):
+                with self.assertRaises(SystemExit):
+                    main(["--version"])
+        out = buf.getvalue().strip()
+        self.assertEqual(out, "0.0.0+local", "fallback deve ser 0.0.0+local")
+
     def test_send_via_cli(self):
         rc = main(["--config", self.cfg_path, "send", "dev-1", "faça X"])
         self.assertEqual(rc, 0)

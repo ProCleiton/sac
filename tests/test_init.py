@@ -68,6 +68,13 @@ class InitTest(unittest.TestCase):
         prompt_file = self.d / ".sac" / "prompts" / "leader.md"
         self.assertTrue(prompt_file.exists(), "prompt do leader deve ser criado")
 
+    def test_init_boot_wait_default_usado_quando_enter(self):
+        saida = []
+        rc = _run_init(self.d, ["sess", "", "", "1", "lead", "kimi", "", "", "n"], saida)
+        self.assertEqual(rc, 0)
+        toml = (self.d / ".sac" / "sac.toml").read_text(encoding="utf-8")
+        self.assertIn("boot_wait = 8", toml)
+
     def test_wizard_sem_pergunta_de_loops_e_toml_sem_secao(self):
         # v26b: loops removidos — wizard não pergunta e o TOML nunca tem [[loops]]
         saida = []
@@ -651,7 +658,7 @@ class InitWorkspaceTest(unittest.TestCase):
         inputs = [
             "sac-test",       # session
             str(d / "sock" / "tmux.sock"),  # socket
-            "10",             # boot_wait
+            "8",              # boot_wait
             "1",              # 1 agent
             "leader",         # name
             "kimi",           # command
