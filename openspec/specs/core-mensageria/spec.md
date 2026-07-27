@@ -68,7 +68,7 @@ As respostas dos agentes SHALL ser delimitadas por uma sentinela explícita para
 - **THEN** o sistema retorna os últimos 500 caracteres e exit 1, indicando processamento em andamento
 
 ### Requirement: Daemon de entrega direta
-Um daemon opcional SHALL monitorar inbox/claimed de todos os agentes e entregar mensagens diretamente no pane do harness, com suporte a fura-fila (replies entregues mesmo durante tarefa claimed) e backoff exponencial de re-cutucadas. O daemon SHALL também renderizar approval_requests destinadas ao `user` no pane do líder.
+Um daemon opcional SHALL monitorar inbox/claimed de todos os agentes e entregar mensagens diretamente no pane do harness, com suporte a fura-fila (replies entregues mesmo durante tarefa claimed) e backoff exponencial de re-cutucadas. O daemon SHALL também renderizar approval_requests destinadas ao `user` no pane do líder e gerenciar a coleta de replies de fan-outs.
 
 #### Scenario: Daemon entrega mensagem nova
 - **GIVEN** daemon ativo (PID file em `.sac/daemon.pid`)
@@ -104,6 +104,13 @@ Um daemon opcional SHALL monitorar inbox/claimed de todos os agentes e entregar 
 - **WHEN** o daemon varre a inbox do user
 - **THEN** renderiza o pedido no pane do líder (user não tem pane próprio), incluindo o id e a instrução de resposta
 - **AND** registra o evento `approval_prompt` em `log.jsonl`
+
+#### Scenario: Daemon gerencia fan-out
+- **GIVEN** fan-out disparado com N targets
+- **WHEN** as replies com `reply_to_fanout` chegam
+- **THEN** o daemon coleta as replies em um agregado (persistindo parcial em `.sac/fanout/<id>.partial.json`)
+- **AND** quando todas as replies são recebidas (ou o timeout expira), entrega o agregado ao solicitante
+- **AND** registra evento `fanout_complete` com contagem de replies recebidas
 
 ### Requirement: Stale detection (re-poke) com backoff
 Mensagens esquecidas (claimed sem `sac done` há mais de `poke_stale_after` segundos) SHALL ser detectadas para re-cutucada do agente, com backoff exponencial por mensagem (base `poke_stale_after`, teto 5 min).
@@ -321,4 +328,13 @@ O sistema SHALL suportar o campo opcional `run` no cabeçalho do arquivo .msg, a
 - **WHEN** ela é concluída via `sac done`
 - **THEN** após o move para `done/`, o journal da run registra `task_done` com fsync
 - **AND** se o journal não puder ser escrito, o erro é registrado em `log.jsonl` sem desfazer a conclusão
+
+### Requirement: Fan-out como fluxo de mensageria
+O sistema SHALL suportar mensagens com cabeçalho `fanout_id` para agrupar replies de um fan-out.
+
+#### Scenario: Mensagem com fanout_id
+- **WHEN** `sac fanout` dispara mensagens
+- **THEN** cada mensagem .msg contém `fanout_id: <id_do_grupo>`
+- **AND** ao enviar a reply, o agente inclui `reply_to_fanout: <id>` no cabeçalho
+- **AND** o daemon identifica a reply como parte de um fan-out e gerencia a coleta
 
