@@ -69,6 +69,9 @@ def _build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--approval", action="store_true",
                     help="(só líder) cria approval_request na inbox do user; "
                          "o daemon renderiza o pedido no pane do líder")
+    sp.add_argument("--schema", default=None, metavar="JSON",
+                    help="reply_schema (JSON Schema, subconjunto) esperado da resposta; "
+                         "o daemon valida a reply antes de entregar")
 
     sp = sub.add_parser("approve", help="aprova uma approval_request pendente")
     sp.add_argument("msg_id")
@@ -234,7 +237,7 @@ def main(argv: list[str] | None = None) -> int:
             case "send":
                 cmd_send(cfg, store, tmux, args.to, args.body,
                          sender=os.environ.get("SAC_AGENT", "user"),
-                         approval=args.approval)
+                         approval=args.approval, schema=args.schema)
                 return 0
             case "approve":
                 return cmd_approve(store, args.msg_id)

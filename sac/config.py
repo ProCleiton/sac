@@ -32,6 +32,7 @@ class Config:
     session_height: int = 50
     socket: str | None = None
     root: str | None = None
+    reply_schema_default: dict | None = None
     windows: dict[str, str] = field(default_factory=dict)
     agents: list[AgentConfig] = field(default_factory=list)
 
@@ -95,6 +96,14 @@ def load_config(path: Path) -> Config:
         if not Path(session_root).is_absolute():
             raise ConfigError(f"session.root deve ser um caminho absoluto: {session_root}")
 
+    reply_schema_default = session.get("reply_schema_default")
+    if reply_schema_default is not None:
+        from .reply_validator import ReplyValidator, SchemaError
+        try:
+            reply_schema_default = ReplyValidator.parse_schema(reply_schema_default)
+        except SchemaError as e:
+            raise ConfigError(f"session.reply_schema_default inválido: {e}") from e
+
     windows = {str(k): str(v) for k, v in data.get("windows", {}).items()}
     if windows:
         from .layout import leaf_names, parse_spec  # import tardio (evita ciclo)
@@ -131,6 +140,7 @@ def load_config(path: Path) -> Config:
         session_height=_session_size("height", 50),
         socket=(str(Path(session["socket"]).expanduser()) if session.get("socket") else None),
         root=session_root,
+        reply_schema_default=reply_schema_default,
         windows=windows,
         agents=agents,
     )

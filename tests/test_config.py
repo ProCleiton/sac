@@ -255,3 +255,36 @@ class WindowsConfigTest(unittest.TestCase):
         with self.assertRaises(ConfigError):
             self._load(WINDOWS_VALID.replace('trabalho = "dev-1,auditor"',
                                              'trabalho = "dev-1"'))
+
+
+class ReplySchemaDefaultTest(unittest.TestCase):
+    def _load(self, text):
+        d = tempfile.mkdtemp()
+        p = Path(d) / "sac.toml"
+        p.write_text(text, encoding="utf-8")
+        return load_config(p)
+
+    def test_reply_schema_default_ausente(self):
+        cfg = self._load(VALID)
+        self.assertIsNone(cfg.reply_schema_default)
+
+    def test_reply_schema_default_ok(self):
+        cfg = self._load(VALID.replace(
+            'name = "sac-test"',
+            'name = "sac-test"\nreply_schema_default = \'{"type": "object", '
+            '"properties": {"status": {"enum": ["OK", "FAIL"]}}}\''))
+        self.assertEqual(cfg.reply_schema_default["type"], "object")
+        self.assertEqual(cfg.reply_schema_default["properties"]["status"]["enum"],
+                         ["OK", "FAIL"])
+
+    def test_reply_schema_default_invalido(self):
+        with self.assertRaises(ConfigError):
+            self._load(VALID.replace(
+                'name = "sac-test"',
+                'name = "sac-test"\nreply_schema_default = \'{"oneOf": []}\''))
+
+    def test_reply_schema_default_mal_formado(self):
+        with self.assertRaises(ConfigError):
+            self._load(VALID.replace(
+                'name = "sac-test"',
+                'name = "sac-test"\nreply_schema_default = \'[1, 2]\''))
