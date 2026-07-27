@@ -331,6 +331,12 @@ class InitContractsTest(unittest.TestCase):
             self.assertIn("AGENTS.md", c["mensageria"],
                           f"{c['key']}: deve orientar que lições NÃO vivem em AGENTS.md")
 
+    def test_contratos_marcam_agents_md_como_contexto_de_projeto(self):
+        # v31: auto-leitura do harness = contexto de projeto, sem rituais
+        for c in CONTRACTS:
+            self.assertIn("contexto de PROJETO", c["mensageria"], c["key"])
+            self.assertIn("pendencias.md", c["mensageria"], c["key"])
+
     def test_agente1_recebe_contrato_lider_sem_pergunta(self):
         saida = []
         rc = _run_init(self.d, ["sess", "", "8", "1", "lead", "kimi", "", "", "n"], saida)

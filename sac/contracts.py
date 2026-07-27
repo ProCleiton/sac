@@ -32,7 +32,11 @@ MESSAGING_LEADER = """## Contrato SAC (obrigatório)
 - Para cobrar revisão: `sac send <aux> "<o que revisar>"`.
 - Para falar com o usuário: `sac send user "<mensagem>"`.
 - Memória e lições do projeto vivem no `sac memory` — NÃO em AGENTS.md,
-  CLAUDE.md ou .github/ (esses arquivos servem só a sessões sem SAC)."""
+  CLAUDE.md ou .github/ (esses arquivos servem só a sessões sem SAC).
+- Seu harness pode auto-carregar AGENTS.md/regras-comuns.md: trate como
+  contexto de PROJETO (convenções, stacks). Workflow e memória seguem este
+  contrato e o `sac memory` — NÃO leia pendencias.md nem execute rituais de
+  sessão direta (handoffs, atualização de pendências)."""
 
 MESSAGING_AUX = """## Contrato SAC (obrigatório)
 
@@ -46,7 +50,11 @@ MESSAGING_AUX = """## Contrato SAC (obrigatório)
   `sac done` nelas, apenas leia e aja.
 - Se o remetente for `user`, responda com `sac send user "<mensagem>"`.
 - Memória e lições do projeto vivem no `sac memory` — NÃO em AGENTS.md,
-  CLAUDE.md ou .github/ (esses arquivos servem só a sessões sem SAC)."""
+  CLAUDE.md ou .github/ (esses arquivos servem só a sessões sem SAC).
+- Seu harness pode auto-carregar AGENTS.md/regras-comuns.md: trate como
+  contexto de PROJETO (convenções, stacks). Workflow e memória seguem este
+  contrato e o `sac memory` — NÃO leia pendencias.md nem execute rituais de
+  sessão direta (handoffs, atualização de pendências)."""
 
 _LIDER = {
     "key": "lider",
