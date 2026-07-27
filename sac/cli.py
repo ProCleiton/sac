@@ -116,7 +116,7 @@ def _build_parser() -> argparse.ArgumentParser:
     sp = sub.add_parser("kill", help="mata e recria o harness de um agente")
     sp.add_argument("agent")
 
-    sub.add_parser("init", help="cria .sac/sac.toml + prompts + .sac/ via questionário interativo")
+    sub.add_parser("init", help="cria .sac/sac.toml + .sac/prompts + estado .sac/ via questionário interativo")
     sub.add_parser("doctor", help="diagnóstico do ambiente (Python, tmux, socket, config, harnesses)")
     sp_plug = sub.add_parser("plugins", aliases=["plugin"],
                              help="gerencia os plugins canônicos (superpowers, rtk, openspec)")

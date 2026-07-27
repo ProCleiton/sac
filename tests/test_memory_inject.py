@@ -109,7 +109,7 @@ class LeaderTemplateTest(unittest.TestCase):
             rc = cmd_init(stdin=lambda: next(inputs), stdout=lambda s: None,
                           root=d, is_interactive=True)
         self.assertEqual(rc, 0)
-        content = (d / "prompts" / "lead.md").read_text(encoding="utf-8")
+        content = (d / ".sac" / "prompts" / "lead.md").read_text(encoding="utf-8")
         self.assertIn(MARK_BEGIN, content)
         self.assertIn(MARK_END, content)
         self.assertIn(CURATION_INSTRUCTION, content)
@@ -124,7 +124,7 @@ boot_wait = 0
 name = "lider"
 command = "kimi"
 role = "leader"
-prompt_file = "prompts/lider.md"
+prompt_file = ".sac/prompts/lider.md"
 boot_wait = 0
 """
 
@@ -133,9 +133,9 @@ class UpInjectTest(unittest.TestCase):
     def setUp(self):
         self.d = Path(tempfile.mkdtemp())
         (self.d / ".sac").mkdir()
-        (self.d / "prompts").mkdir()
+        (self.d / ".sac" / "prompts").mkdir()
         (self.d / ".sac" / "sac.toml").write_text(TOML, encoding="utf-8")
-        (self.d / "prompts" / "lider.md").write_text(LEADER_MD, encoding="utf-8")
+        (self.d / ".sac" / "prompts" / "lider.md").write_text(LEADER_MD, encoding="utf-8")
         self.cfg = load_config(self.d / ".sac" / "sac.toml")
         self.store = Store(self.d)
 
@@ -153,15 +153,15 @@ class UpInjectTest(unittest.TestCase):
         ms.remember("tarefa", "migrar esteira")
         rc = self._cmd_up()
         self.assertEqual(rc, 0)
-        text = (self.d / "prompts" / "lider.md").read_text(encoding="utf-8")
+        text = (self.d / ".sac" / "prompts" / "lider.md").read_text(encoding="utf-8")
         self.assertIn("#1 [tarefa] (i3) migrar esteira", text)
         self.assertIn("texto manual ANTES", text, "conteúdo fora dos marcadores preservado")
 
     def test_up_sem_marcadores_nao_toca_contrato(self):
-        (self.d / "prompts" / "lider.md").write_text("contrato antigo\n", encoding="utf-8")
+        (self.d / ".sac" / "prompts" / "lider.md").write_text("contrato antigo\n", encoding="utf-8")
         rc = self._cmd_up()
         self.assertEqual(rc, 0)
-        self.assertEqual((self.d / "prompts" / "lider.md").read_text(encoding="utf-8"),
+        self.assertEqual((self.d / ".sac" / "prompts" / "lider.md").read_text(encoding="utf-8"),
                          "contrato antigo\n")
 
     def test_up_sem_banco_nao_cria_memory_db(self):
@@ -177,9 +177,9 @@ class MemoryWriteRefreshTest(unittest.TestCase):
     def setUp(self):
         self.d = Path(tempfile.mkdtemp())
         (self.d / ".sac").mkdir()
-        (self.d / "prompts").mkdir()
+        (self.d / ".sac" / "prompts").mkdir()
         (self.d / ".sac" / "sac.toml").write_text(TOML, encoding="utf-8")
-        (self.d / "prompts" / "lider.md").write_text(LEADER_MD, encoding="utf-8")
+        (self.d / ".sac" / "prompts" / "lider.md").write_text(LEADER_MD, encoding="utf-8")
         self.cfg_path = str(self.d / ".sac" / "sac.toml")
 
     def _run(self, argv):
@@ -190,7 +190,7 @@ class MemoryWriteRefreshTest(unittest.TestCase):
         return rc, out.getvalue()
 
     def _prompt(self):
-        return (self.d / "prompts" / "lider.md").read_text(encoding="utf-8")
+        return (self.d / ".sac" / "prompts" / "lider.md").read_text(encoding="utf-8")
 
     def test_remember_atualiza_contrato(self):
         rc, _ = self._run(["remember", "tarefa", "migrar esteira"])
@@ -204,10 +204,10 @@ class MemoryWriteRefreshTest(unittest.TestCase):
         self.assertNotIn("temporária", self._prompt())
 
     def test_write_sem_marcadores_nao_quebra(self):
-        (self.d / "prompts" / "lider.md").write_text("sem marcadores\n", encoding="utf-8")
+        (self.d / ".sac" / "prompts" / "lider.md").write_text("sem marcadores\n", encoding="utf-8")
         rc, _ = self._run(["remember", "tarefa", "x"])
         self.assertEqual(rc, 0, "write funciona mesmo sem marcadores no contrato")
-        self.assertEqual((self.d / "prompts" / "lider.md").read_text(encoding="utf-8"),
+        self.assertEqual((self.d / ".sac" / "prompts" / "lider.md").read_text(encoding="utf-8"),
                          "sem marcadores\n")
 
 

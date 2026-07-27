@@ -17,7 +17,7 @@ It is "stupid" on purpose:
 - It does **not** orchestrate business logic or enforce workflows.
 - It only guarantees **mail delivery** (a filesystem mailbox + daemon).
 
-Workflow intelligence lives in the **contract prompts** (`prompts/*.md`) —
+Workflow intelligence lives in the **contract prompts** (`.sac/prompts/*.md`) —
 that is where you define, for example, that the leader must send the dev's work
 to the auditor before approving.
 
@@ -28,7 +28,7 @@ Think of a government office with mailboxes:
 | SAC Component | In the Metaphor |
 |---|---|
 | `.sac/sac.toml` | The org chart (who sits at which desk) |
-| `prompts/*.md` | Each employee's conduct manual |
+| `.sac/prompts/*.md` | Each employee's conduct manual |
 | daemon (`sac daemon`) | The courier who carries memos desk-to-desk |
 | `.sac/` | The records room where everything is logged |
 
@@ -156,7 +156,7 @@ leader decomposes the work, delegates with `sac send <aux> "<task>"`, demands
 review of the auxiliaries' work (reviewing itself or delegating to a reviewer
 aux), and iterates delegate → review → fix until the result converges —
 escalating to the user only on real blockers. The generated leader contract
-(`prompts/<leader>.md`) already carries this discipline; nothing else is
+(`.sac/prompts/<leader>.md`) already carries this discipline; nothing else is
 needed.
 
 ---
@@ -185,7 +185,7 @@ Every contract prompt has at least three parts:
 3. **Workspace rules** — your project conventions (TDD, layering, soft delete,
    commit prefixes, no unauthorized `git push`, etc.).
 
-### 6.2 Real Example (summary of `prompts/development-specialist-1.md`)
+### 6.2 Real Example (summary of `.sac/prompts/development-specialist-1.md`)
 
 ```markdown
 # Role: development-specialist (SAC)
@@ -250,7 +250,7 @@ The wizard opens by announcing what will be generated and where:
 SAC init — this wizard generates:
   .sac/sac.toml   (pipeline configuration)
   .sac/           (state: inbox/claimed/done)
-  prompts/*.md    (each agent's contract — edit freely afterwards)
+  .sac/prompts/*.md (each agent's contract — edit freely afterwards)
 ```
 
 ### 7.1 What the Wizard Asks
@@ -286,7 +286,7 @@ SAC init — this wizard generates:
 | Artifact | Content |
 |---|---|
 | `.sac/sac.toml` | Full config, with **round-trip validation** (the generated TOML is re-parsed with `tomllib` before writing; if invalid, init aborts) |
-| `prompts/<name>.md` | One per agent: the canonical contract for the chosen role (SAC messaging protocol + role discipline) plus harness-specific notes (`KIMI_NOTE` / `OPENCODE_NOTE`) |
+| `.sac/prompts/<name>.md` | One per agent: the canonical contract for the chosen role (SAC messaging protocol + role discipline) plus harness-specific notes (`KIMI_NOTE` / `OPENCODE_NOTE`) |
 | `.sac/` | State skeleton: `inbox/`, `claimed/`, `done/` |
 | Socket directory | Created automatically if `socket` was configured |
 
@@ -294,7 +294,7 @@ SAC init — this wizard generates:
 
 - **Config already exists** (`.sac/sac.toml` or legacy `sac.toml`)? Asks
   "Overwrite? (y/N)" — default **no**.
-- **`prompts/*.md` already exist?** Same question, default **no** ("prompts
+- **`.sac/prompts/*.md` already exist?** Same question, default **no** ("prompts
   kept").
 - `Ctrl+C`/`EOF` mid-questionnaire → "init cancelled by user", no side effects.
 
@@ -316,11 +316,11 @@ the **SAC messaging protocol** (inbox / `sac next` / reply / `sac done`) + the
 
 The disciplines are inspired by the **superpowers** skills plugin and the
 **OpenSpec** workflow — SAC's canonical stack — but work without them
-installed. Editing a contract later = opening `prompts/<name>.md` in your
+installed. Editing a contract later = opening `.sac/prompts/<name>.md` in your
 editor; the wizard never re-edits contracts.
 
 In other words: `init` gives you a **working skeleton with real disciplines**;
-you add the project-specific business rules by editing `prompts/*.md`.
+you add the project-specific business rules by editing `.sac/prompts/*.md`.
 
 ### 7.5 Starting Over: `sac uninstall`
 
@@ -422,7 +422,7 @@ already set — `sac` commands work from any directory inside the session.
 - Design doc: `sac/docs/2026-07-24-sac-design.md`
 - Implementation plan: `sac/docs/2026-07-24-sac-implementation-plan.md`
 - Wizard source: `sac/sac/init.py`
-- Real contracts: `prompts/*.md`
+- Real contracts: `.sac/prompts/*.md`
 - Inspiration: the **CCB (Claude Code Bridge)** project — SAC reimplements the
   idea in its simplest possible form, replacing screen-state detection with a
   filesystem mailbox + explicit sentinel contract (`SAC_DONE`).
